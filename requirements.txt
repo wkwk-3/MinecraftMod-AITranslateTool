@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pydantic>=2
+requests>=2.31
+huggingface_hub>=0.24
+pyngrok>=7.1
+tomli>=2.0; python_version < "3.11"
+gguf>=0.10
+psutil>=5.9

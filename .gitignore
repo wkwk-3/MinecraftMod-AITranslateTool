@@ -1,0 +1,10 @@
+# 作業データ (MOD・翻訳結果・設定・翻訳メモリ) は公開しない
+mct_work/
+*.zip
+*.gguf
+# 開発用の設定やキャッシュ (ローカルのパスを含むことがある)
+.claude/
+.pytest_cache/
+__pycache__/
+*.pyc
+llama.cpp/

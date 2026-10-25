@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MC MOD Translator</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--fg:#1d2330;--muted:#6b7385;--line:#dfe3ea;--acc:#3b7d2a;--acc2:#e8f3e4;--sel:#dbeafe;--warn:#b45309;--err:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--panel:#1c2027;--fg:#e6e9ef;--muted:#9aa3b5;--line:#2c323c;--acc:#6cbf4f;--acc2:#22301d;--sel:#1e3a5f}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0}.pill{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--acc2);color:var(--acc)}
+main{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr);gap:16px;padding:16px;max-width:1400px;margin:auto}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:14px;margin:0 0 10px}
+button,select,input,textarea{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer}
+button.primary{background:var(--acc);color:#fff;border-color:var(--acc)}button:disabled{opacity:.5;cursor:default}
+input[type=text],input[type=number],select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.grow{flex:1;min-width:160px}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--muted);margin-bottom:10px}
+#drop.over{border-color:var(--acc);background:var(--acc2)}
+.tablewrap{max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px}
+table{border-collapse:collapse;width:100%}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);font-weight:600;cursor:pointer;user-select:none}
+tbody tr{cursor:default;user-select:none}tbody tr:hover{background:var(--acc2)}tbody tr.sel{background:var(--sel)}
+tbody tr:focus{outline:2px solid var(--acc);outline-offset:-2px}
+td.desc{white-space:normal;color:var(--muted);font-size:12px;max-width:260px}
+.tag{font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);color:var(--muted)}
+.muted{color:var(--muted);font-size:12px}
+.bar{height:10px;background:var(--line);border-radius:5px;overflow:hidden}.bar>div{height:100%;background:var(--acc);width:0;transition:width .4s}
+#log{height:220px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap}
+details{margin-top:10px}summary{cursor:pointer;font-weight:600}
+label.chk{display:flex;gap:6px;align-items:center;font-size:13px}
+.stack>*+*{margin-top:10px}.warn{color:var(--warn)}.err{color:var(--err)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--muted)}.dot.on{background:var(--acc)}
+.tabs{display:flex;gap:4px;margin-left:12px}.tabs button{white-space:nowrap;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:6px 10px;color:var(--muted)}
+.tabs button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--acc);font-weight:600}
+main.single{grid-template-columns:1fr;max-width:1200px}main[hidden]{display:none}
+.modcard{border:1px solid var(--line);border-radius:8px;padding:10px}.modcard h3{font-size:14px;margin:0}
+.modcard td.path{white-space:normal;word-break:break-all;font:12px ui-monospace,monospace}.modcard tr.off{opacity:.5}
+.arrow{color:var(--muted)}
+
+/* ---- レイアウト調整: 画面幅・操作しやすさ ---- */
+body{font-size:14px;-webkit-text-size-adjust:100%}
+.muted{font-size:13px;line-height:1.55}
+th,td{font-size:13px;vertical-align:middle}
+code{word-break:break-all}
+/* グリッドの子が内容幅で広がらないようにする (横スクロール防止) */
+main>*,section,.stack,.row>*{min-width:0}
+main{align-items:start}
+/* ヘッダー: タイトルとバッジは折り返さない。タブは横にスクロール */
+header{flex-wrap:wrap;row-gap:4px}
+header h1,.pill{white-space:nowrap}
+.tabs{overflow-x:auto;scrollbar-width:none;min-width:0}
+.tabs::-webkit-scrollbar{display:none}
+#gpu{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40vw}
+/* 操作部品の大きさをそろえる */
+button,select,input[type=text],input[type=number]{min-height:34px}
+button{display:inline-flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
+input[type=checkbox],input[type=radio]{width:16px;height:16px;flex:none;accent-color:var(--acc);margin:0}
+label{font-size:13px}
+label>input[type=text],label>input[type=number],label>select,label>textarea{margin-top:4px}
+textarea{resize:vertical;min-height:72px}
+#log{height:clamp(140px,28vh,360px)}
+.tablewrap{max-height:min(52vh,560px);-webkit-overflow-scrolling:touch}
+/* 右列は画面の高さに収まるように追従 (広い画面のみ) */
+@media (min-width:1101px){main:not(.single)>div:last-child{position:sticky;top:64px;max-height:calc(100vh - 80px);overflow-y:auto;padding-right:2px}}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
+/* タブレット */
+@media (max-width:900px){main{padding:12px;gap:12px}section{padding:12px}}
+/* スマートフォン */
+@media (max-width:600px){
+  header{padding:8px 12px;gap:8px}
+  header h1{font-size:15px}
+  .tabs{order:3;flex:1 0 100%;margin-left:0}
+  .tabs button{flex:1;padding:8px 6px}
+  #gpu{max-width:45vw;font-size:11px}
+  main{padding:8px;gap:8px}
+  section{padding:10px;border-radius:8px}
+  #drop{padding:12px}
+  .grow{min-width:0}
+  .row>button{flex:1 1 auto}
+  .row>input[type=text]{flex:1 1 100%}
+  th,td{padding:6px}
+  td.desc{max-width:180px}
+  .row>h2{flex:1 1 100%}
+  #fqDrop{justify-content:center}
+  #fqDrop>span{flex:1 1 100%;text-align:center}
+  .modcard td.path{min-width:220px}
+}
+/* タッチ操作: 指で押しやすい大きさ */
+@media (pointer:coarse){
+  button,select,input[type=text],input[type=number]{min-height:42px}
+  input[type=checkbox],input[type=radio]{width:20px;height:20px}
+  tbody td{padding-top:9px;padding-bottom:9px}
+  .kbd-help{display:none}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>MC MOD Translator</h1><span class="pill">日本語 (ja_jp)</span>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tabbtn-main" aria-controls="tab-main" aria-selected="true">翻訳</button>
+    <button role="tab" id="tabbtn-res" aria-controls="tab-res" aria-selected="false">追加リソース <span id="resBadge" class="pill" hidden></span></button>
+    <button role="tab" id="tabbtn-ftbq" aria-controls="tab-ftbq" aria-selected="false">FTB Quests</button>
+  </nav>
+  <span class="grow"></span><span id="gpu" class="muted"></span>
+</header>
+<main id="tab-res" role="tabpanel" aria-labelledby="tabbtn-res" class="single" hidden>
+  <section>
+    <h2>lang 以外の翻訳対象</h2>
+    <div class="muted">ガイドブックやマニュアルなど、リソースパックで差し替えられるファイルを探します。判定と抽出は補助モデルが行います。
+      出力先は Mod ごとに決まり、lang と同じリソースパックにまとめます。</div>
+    <div class="row" style="margin-top:10px">
+      <button id="resScanSel" class="primary">選択中の Mod を調べる (<span id="resSelCount">0</span>)</button>
+      <button id="resScanAll">すべての Mod を調べる</button>
+      <span class="grow"></span>
+      <input id="resQ" type="text" style="max-width:260px" placeholder="Mod名・パスで検索">
+    </div>
+    <div class="row" style="margin-top:8px"><b id="resPhase" class="muted"></b></div>
+  </section>
+  <section>
+    <div class="row"><h2 class="grow" style="margin:0">検出したファイル</h2>
+      <label class="chk"><input type="checkbox" id="resWithLang" checked> lang も翻訳する</label>
+      <button id="resGo" class="primary">翻訳する</button></div>
+    <div id="resSummary" class="muted" style="margin:6px 0"></div>
+    <div id="resList" class="stack"></div>
+  </section>
+  <section id="resPreviewBox" hidden>
+    <div class="row"><h2 class="grow" style="margin:0">抽出内容</h2><button id="resPreviewClose">閉じる</button></div>
+    <div id="resPreview"></div>
+  </section>
+</main>
+<main id="tab-ftbq" role="tabpanel" aria-labelledby="tabbtn-ftbq" class="single" hidden>
+  <section>
+    <h2>1. クエストの読み込み</h2>
+    <div class="muted">インスタンスの <code>config/ftbquests</code> フォルダか、その ZIP を選んでください。英語と日本語の言語ファイルだけを取り込みます。</div>
+    <div id="fqDrop" class="row" style="margin-top:10px;border:2px dashed var(--line);border-radius:10px;padding:14px">
+      <button id="fqPickDir" class="primary">フォルダを選ぶ</button>
+      <button id="fqPickZip">ZIPを選ぶ</button>
+      <span class="muted grow">ZIP をドロップ</span>
+      <input id="fqDir" type="file" webkitdirectory directory multiple hidden>
+      <input id="fqZip" type="file" accept=".zip" hidden>
+    </div>
+    <div id="fqUpMsg" class="muted" style="margin-top:6px"></div>
+  </section>
+  <section>
+    <h2>2. クエストブック</h2>
+    <div id="fqProjects" class="stack"></div>
+  </section>
+  <section>
+    <h2>3. アイテム名の辞書</h2>
+    <div class="muted">Mod の英語名とリソースパックの日本語名を対応付け、クエスト内のアイテム名を統一します。下にあるリソースパックほど優先されます。</div>
+    <div class="row" style="margin-top:8px"><button id="fqPackUp">リソースパックを追加</button><input id="fqPackFile" type="file" accept=".zip" multiple hidden>
+      <span class="grow"></span><button id="fqNamesPv">辞書を確認</button></div>
+    <div id="fqPacks" class="stack" style="margin-top:8px"></div>
+    <div id="fqNames" class="muted" style="margin-top:6px"></div>
+  </section>
+  <section>
+    <h2>4. 翻訳</h2>
+    <label class="chk"><input type="checkbox" id="fqExisting" checked> 既存の日本語訳を使う</label>
+    <div class="row" style="margin-top:8px"><button id="fqGo" class="primary grow">翻訳する</button><button id="fqStop">中止</button></div>
+    <div class="row" style="margin-top:8px"><b id="fqPhase">待機中</b><span id="fqCur" class="muted grow"></span><span id="fqCnt" class="muted"></span></div>
+    <div class="bar" style="margin:8px 0"><div id="fqBar"></div></div>
+    <div id="fqResult"></div>
+    <div class="muted">ZIP を展開してインスタンスへ配置してください。中断した場合は翻訳タブから再開できます。</div>
+  </section>
+</main>
+<main id="tab-main" role="tabpanel" aria-labelledby="tabbtn-main">
+  <div class="stack">
+    <section id="resumeBox" hidden style="border-color:var(--warn)">
+      <h2 class="warn">中断したジョブ</h2>
+      <div id="resumeList" class="stack"></div>
+    </section>
+    <section>
+      <h2>Mod</h2>
+      <div id="drop">JAR をドロップ、または <button id="pick">JARを選ぶ</button>
+        <input id="file" type="file" accept=".jar,.zip" multiple hidden>
+        <div class="muted">保存先: <code id="workdir">-</code></div>
+      </div>
+      <div class="row">
+        <input id="q" type="text" class="grow" placeholder="名前・modid・ローダーで検索 (Ctrl+F)">
+        <button id="selAll">全選択</button><button id="selNone">全解除</button>
+        <button id="del">削除</button>
+      </div>
+      <div class="muted kbd-help" style="margin-top:6px">Shift+クリックで範囲選択、Ctrl+クリックで追加選択</div>
+      <div class="tablewrap"><table>
+        <thead><tr><th style="width:28px"><input type="checkbox" id="hdrChk" aria-label="全選択"></th>
+          <th data-k="name">名前</th><th data-k="mod_ids">modid</th><th data-k="loader">ローダー</th>
+          <th data-k="source_entries">項目数</th><th>前提 Mod</th><th>状態</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+      <div class="row" style="margin-top:8px"><span id="selInfo" class="muted grow"></span></div>
+      <div id="deps" class="muted"></div>
+    </section>
+    <section>
+      <h2>進行状況</h2>
+      <div class="row"><b id="phase">待機中</b><span id="cur" class="muted grow"></span><span id="cnt" class="muted"></span></div>
+      <div class="bar" style="margin:8px 0"><div id="barIn"></div></div>
+      <div id="result"></div>
+      <div id="log"></div>
+      <details id="jobsBox"><summary>実行履歴</summary>
+        <div class="tablewrap" style="max-height:30vh"><table>
+          <thead><tr><th>ジョブ</th><th>状態</th><th>進捗</th><th>再開回数</th><th></th></tr></thead>
+          <tbody id="jobsBody"></tbody></table></div>
+        <pre id="jobHist" class="muted" style="white-space:pre-wrap;max-height:200px;overflow:auto"></pre>
+      </details>
+    </section>
+  </div>
+  <div class="stack">
+    <section>
+      <h2>翻訳</h2>
+      <div class="stack">
+        <label class="chk"><input type="checkbox" id="optDeps" checked> 前提 Mod も翻訳する</label>
+        <label class="chk"><input type="checkbox" id="optExisting" checked> Mod 同梱の日本語訳を使う</label>
+        <label class="chk"><input type="checkbox" id="optSwap" checked> モデルを切り替えて VRAM を節約する</label>
+        <label class="chk"><input type="checkbox" id="optRes" checked> 追加リソースも翻訳する (<span id="optResCount">0</span> ファイル)</label>
+        <div class="row"><label class="grow">パック名<input id="packName" type="text" value="MOD日本語化パック"></label>
+          <label style="width:130px">パック形式<select id="packFmt">
+            <option value="15">15 (1.20.1)</option><option value="18">18 (1.20.2)</option><option value="22">22 (1.20.3-4)</option>
+            <option value="34" selected>34 (1.21-1.21.1)</option><option value="42">42 (1.21.2-3)</option><option value="46">46 (1.21.4)</option>
+            <option value="55">55 (1.21.5)</option><option value="63">63 (1.21.6)</option><option value="64">64 (1.21.7-8)</option>
+            <option value="9">9 (1.19.x)</option><option value="8">8 (1.18.x)</option><option value="6">6 (1.16.x)</option><option value="3">3 (1.12.x)</option>
+          </select></label></div>
+        <div class="row"><button id="go" class="primary grow">翻訳する</button><button id="stop">中止</button></div>
+        <div id="outputs"></div>
+      </div>
+    </section>
+    <section>
+      <h2>モデル</h2>
+      <div class="stack" id="models"></div>
+    </section>
+    <section>
+      <h2>用語集</h2>
+      <div class="muted">1 行に 1 語。書式: <code>原文 = 訳語 | メモ | 区別</code>。「区別」を付けると大文字と小文字を区別します。</div>
+      <textarea id="gloss" rows="7" placeholder="Mana = マナ&#10;Altar = 祭壇 | 建造物&#10;ORE = オア | 略語 | 区別"></textarea>
+      <div class="row" style="margin-top:6px"><button id="saveGloss">保存</button><span id="glossInfo" class="muted grow"></span><button id="clearMem">翻訳メモリを削除</button></div>
+      <div class="row" style="margin-top:8px"><button id="fromJa" class="grow">同梱の日本語訳から用語を取り込む</button></div>
+      <div class="muted">翻訳時にも自動で取り込みます。</div>
+      <details><summary class="muted" id="officialSum">取り込んだ用語 (0)</summary>
+        <div class="tablewrap" style="max-height:30vh"><table><tbody id="officialBody"></tbody></table></div></details>
+    </section>
+    <section>
+      <h2>翻訳の指示</h2>
+      <label>定着した訳がない固有名詞<select id="pmProper"></select></label>
+      <label style="display:block;margin-top:8px">追加の指示 (2000 文字まで)
+        <textarea id="pmCustom" rows="4" placeholder="例: 説明文は「です・ます」調にする"></textarea></label>
+      <div class="muted">プレースホルダの保持など、必須のルールより優先されません。</div>
+      <div class="row" style="margin-top:6px"><button id="pmSave">保存</button><span id="pmMsg" class="muted grow"></span>
+        <button id="pmPreview">プロンプトを表示</button></div>
+      <pre id="pmView" hidden style="white-space:pre-wrap;max-height:40vh;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px"></pre>
+    </section>
+  </div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const api=async(p,o={})=>{const r=await fetch(p,{headers:{'content-type':'application/json'},...o});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json()};
+const post=(p,b)=>api(p,{method:'POST',body:JSON.stringify(b||{})});
+let mods=[],view=[],sel=new Set(),anchor=null,cursor=null,sortK='name',sortDir=1;
+
+// ---------- upload
+const drop=$('#drop');
+$('#pick').onclick=()=>$('#file').click();
+$('#file').onchange=e=>upload(e.target.files);
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>upload(e.dataTransfer.files));
+async function upload(files){
+  if(!files.length)return;const fd=new FormData();for(const f of files)fd.append('files',f);
+  drop.firstChild.textContent=`読み込んでいます (${files.length} 件)… `;
+  try{const r=await fetch('/api/upload',{method:'POST',body:fd});const j=await r.json();j.added.forEach(u=>sel.add(u))}
+  finally{drop.firstChild.textContent='JAR をドロップ、または ';$('#file').value='';loadMods()}
+}
+
+// ---------- list / search / sort
+async function loadMods(){mods=await api('/api/mods');render()}
+function render(){
+  const terms=$('#q').value.toLowerCase().split(/\s+/).filter(Boolean);
+  view=mods.filter(m=>{const h=[m.name,m.filename,m.loader,m.version,m.description,...m.mod_ids].join(' ').toLowerCase();return terms.every(t=>h.includes(t))});
+  view.sort((a,b)=>{let x=a[sortK],y=b[sortK];if(Array.isArray(x)){x=x.join();y=y.join()}return (x>y?1:x<y?-1:0)*sortDir});
+  const known=new Set(mods.flatMap(m=>m.mod_ids));
+  $('#tbody').innerHTML=view.map((m,i)=>`<tr data-i="${i}" tabindex="-1" class="${sel.has(m.uid)?'sel':''}" title="${esc(m.filename)}">
+    <td><input type="checkbox" tabindex="-1" ${sel.has(m.uid)?'checked':''}></td>
+    <td><b>${esc(m.name)}</b> <span class="muted">${esc(m.version)}</span></td>
+    <td>${m.mod_ids.map(esc).join(', ')}</td><td><span class="tag">${esc(m.loader)}</span></td>
+    <td>${m.source_entries}</td>
+    <td class="desc">${m.depends.map(d=>`<span class="${known.has(d)?'':'warn'}">${esc(d)}</span>`).join(', ')}</td>
+    <td>${m.source_entries?(m.has_ja?'<span class="tag">日本語あり</span>':''):'<span class="muted">言語ファイルなし</span>'}</td></tr>`).join('')
+    ||'<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">Mod がありません</td></tr>';
+  const vis=view.filter(m=>sel.has(m.uid)).length,h=$('#hdrChk');
+  h.checked=view.length&&vis===view.length;h.indeterminate=vis>0&&vis<view.length;
+  $('#selInfo').textContent=`選択 ${sel.size} 件 / 表示 ${view.length} 件 / 全 ${mods.length} 件`;
+  $('#resSelCount').textContent=sel.size;
+  document.querySelectorAll('th[data-k]').forEach(th=>th.textContent=th.textContent.replace(/ [▲▼]$/,'')+(th.dataset.k===sortK?(sortDir>0?' ▲':' ▼'):''));
+  analyzeDeps();
+}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let qT;$('#q').oninput=()=>{clearTimeout(qT);qT=setTimeout(render,120)};
+document.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k;sortDir=sortK===k?-sortDir:1;sortK=k;render()});
+
+// ---------- selection (OS 標準: click / ctrl・cmd / shift / checkbox / keyboard)
+function selectRange(a,b,additive){if(!additive)sel.clear();const[s,e]=a<b?[a,b]:[b,a];for(let i=s;i<=e;i++)sel.add(view[i].uid)}
+$('#tbody').addEventListener('mousedown',e=>{if(e.shiftKey)e.preventDefault()});
+$('#tbody').addEventListener('click',e=>{
+  const tr=e.target.closest('tr[data-i]');if(!tr)return;const i=+tr.dataset.i,uid=view[i].uid;
+  const toggle=e.ctrlKey||e.metaKey||e.target.type==='checkbox';
+  if(e.shiftKey&&anchor!=null)selectRange(anchor,i,toggle);
+  else if(toggle){sel.has(uid)?sel.delete(uid):sel.add(uid);anchor=i}
+  else{sel.clear();sel.add(uid);anchor=i}
+  cursor=i;render();focusRow();
+});
+$('#hdrChk').onclick=e=>{view.forEach(m=>e.target.checked?sel.add(m.uid):sel.delete(m.uid));render()};
+$('#selAll').onclick=()=>{view.forEach(m=>sel.add(m.uid));render()};
+$('#selNone').onclick=()=>{sel.clear();anchor=null;render()};
+function focusRow(){const r=$(`tr[data-i="${cursor}"]`);r&&r.focus()}
+document.addEventListener('keydown',e=>{
+  if($('#tab-main').hidden)return;   // MOD 一覧のキー操作は翻訳タブ表示中のみ
+  const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);
+  if((e.ctrlKey||e.metaKey)&&e.key==='f'){e.preventDefault();$('#q').focus();$('#q').select();return}
+  if(typing){if(e.key==='Escape'&&document.activeElement===$('#q')){$('#q').value='';render()}return}
+  if((e.ctrlKey||e.metaKey)&&e.key==='a'){e.preventDefault();view.forEach(m=>sel.add(m.uid));render();return}
+  if(e.key==='Escape'){sel.clear();anchor=null;render();return}
+  if(e.key==='Delete'&&sel.size){$('#del').click();return}
+  if(!view.length||!['ArrowDown','ArrowUp',' ','Home','End'].includes(e.key))return;
+  e.preventDefault();
+  if(e.key===' '){if(cursor!=null){const u=view[cursor].uid;sel.has(u)?sel.delete(u):sel.add(u);anchor=cursor;render();focusRow()}return}
+  const n=e.key==='Home'?0:e.key==='End'?view.length-1:Math.max(0,Math.min(view.length-1,(cursor??-1)+(e.key==='ArrowDown'?1:-1)));
+  if(e.shiftKey){anchor??=cursor??n;selectRange(anchor,n,false)}else if(!(e.ctrlKey||e.metaKey)){sel.clear();sel.add(view[n].uid);anchor=n}
+  cursor=n;render();focusRow();
+});
+$('#del').onclick=async()=>{if(!sel.size||!confirm(`${sel.size} 件の Mod を削除しますか？\n翻訳済みのデータは残ります。`))return;await post('/api/mods/delete',{uids:[...sel]});sel.clear();loadMods()};
+
+let depT;function analyzeDeps(){clearTimeout(depT);depT=setTimeout(async()=>{
+  if(!sel.size){$('#deps').textContent='';return}
+  const r=await post('/api/analyze',{uids:[...sel]});const name=u=>(mods.find(m=>m.uid===u)||{}).name||u;
+  $('#deps').innerHTML=(r.added_deps.length?`前提 Mod を追加: <b>${r.added_deps.map(name).map(esc).join(', ')}</b><br>`:'')+
+    (r.missing.length?`<span class="warn">見つからない前提 Mod: ${r.missing.map(esc).join(', ')}</span>`:'');
+},250)}
+
+// ---------- models
+const roles={translator:'翻訳モデル',helper:'補助モデル'};
+let modelPresets={};
+async function loadModels(){
+  const {presets,config}=await api('/api/models/presets');modelPresets=presets;
+  $('#models').innerHTML=Object.entries(roles).map(([r,label])=>`<div class="stack" data-role="${r}">
+    <div class="row"><span class="dot" id="dot-${r}"></span><b>${label}</b></div>
+    <select class="repo">${presets[r].map((p,i)=>`<option value="${i}">${esc(p.label)}</option>`).join('')}<option value="__custom">Hugging Face のリポジトリを指定</option></select>
+    <input type="text" class="custom" placeholder="例: user/model-GGUF" hidden>
+    <div class="row"><select class="file grow"><option value="">自動</option></select><button class="ls">ファイル一覧</button></div>
+    <div class="row"><input type="text" class="murl grow" placeholder="GGUF の URL">
+      <button class="addurl">追加</button></div>
+    <div class="dl muted"></div>
+    <details><summary class="muted">詳細</summary><div class="stack" style="margin-top:6px">
+      <label>コンテキスト長<input type="number" class="ctx" value="${config[r].ctx}"></label>
+      <label>CPU に置く MoE 層 (-1: 自動、0: すべて GPU)<input type="number" class="moe" value="${config[r].n_cpu_moe}"></label>
+      <label>OpenAI 互換サーバーの URL (ローカル実行時)<input type="text" class="url" value="${esc(config[r].url)}"></label>
+    </div></details>
+    <div class="row"><button class="apply">適用</button><button class="load">読み込む</button><button class="unload">解放</button></div>
+  </div>`).join('<hr style="border:0;border-top:1px solid var(--line)">');
+  for(const [r,c] of Object.entries(config)){
+    const box=$(`[data-role="${r}"]`),rs=box.querySelector('.repo'),fs=box.querySelector('.file'),P=presets[r];
+    const setFile=f=>{fs.innerHTML='<option value="">自動</option>'+(f?`<option value="${esc(f)}">${esc(f)}</option>`:'');fs.value=f||''};
+    // 現在の設定に一致する候補を選ぶ (URL 追加モデル → ファイルまで一致, 標準候補 → リポジトリ一致)
+    let idx=P.findIndex(p=>p.file&&p.repo===c.repo&&p.file===c.file&&(p.path||'')===(c.path||''));
+    if(idx<0)idx=P.findIndex(p=>!p.file&&p.repo===c.repo);
+    if(idx>=0){rs.value=String(idx);setFile(P[idx].file||c.file)}
+    else{rs.value='__custom';box.querySelector('.custom').hidden=false;box.querySelector('.custom').value=c.repo;setFile(c.file)}
+    rs.onchange=()=>{box.querySelector('.custom').hidden=rs.value!=='__custom';setFile(rs.value==='__custom'?'':P[+rs.value].file)};
+    const cur=()=>rs.value==='__custom'?{repo:box.querySelector('.custom').value.trim(),path:''}:P[+rs.value];
+    box.querySelector('.ls').onclick=async e=>{const {repo}=cur();if(!repo)return;e.target.disabled=true;
+      try{const j=await api('/api/models/files?repo='+encodeURIComponent(repo));
+        fs.innerHTML='<option value="">自動 ('+esc(j.default||'-')+')</option>'+j.files.map(f=>`<option value="${esc(f.file)}">${esc(f.file)} — ${(f.size/2**30).toFixed(1)} GB</option>`).join('')}
+      catch(err){alert(err.message)}finally{e.target.disabled=false}};
+    box.querySelector('.addurl').onclick=async e=>{const url=box.querySelector('.murl').value.trim();if(!url)return;
+      try{await post('/api/models/from_url',{url,role:r});box.querySelector('.murl').value='';box.querySelector('.dl').textContent='準備中…'}
+      catch(err){alert(err.message)}};
+    const send=load=>{const p=cur();return post('/api/models/config',{role:r,repo:p.repo,path:p.path||'',file:fs.value,ctx:+box.querySelector('.ctx').value,
+      n_cpu_moe:+box.querySelector('.moe').value,url:box.querySelector('.url').value.trim(),load_now:load})};
+    box.querySelector('.apply').onclick=()=>send(false);
+    box.querySelector('.load').onclick=()=>send(true);
+    box.querySelector('.unload').onclick=()=>post('/api/models/unload',{role:r});
+  }
+}
+
+// ---------- translate / status
+const commonOpts=()=>({include_deps:$('#optDeps').checked,use_existing_ja:$('#optExisting').checked,
+  swap_models:$('#optSwap').checked,pack_format:+$('#packFmt').value,pack_name:$('#packName').value});
+$('#go').onclick=async()=>{
+  if(!sel.size)return alert('Mod を選んでください');
+  // 選択 MOD のうち探索タブで選んだ追加リソース
+  const resources=$('#optRes').checked?Object.fromEntries(Object.entries(resSelected()).filter(([u])=>sel.has(u))):{};
+  try{await post('/api/translate',{uids:[...sel],...commonOpts(),resources})}catch(e){alert(e.message)}
+};
+$('#stop').onclick=()=>post('/api/cancel');
+async function poll(){
+  try{
+    const s=await api('/api/status'),j=s.job;
+    $('#phase').textContent=j.phase;$('#cur').textContent=j.current||'';
+    $('#cnt').textContent=j.total?`${j.done}/${j.total}`:'';$('#barIn').style.width=(j.total?100*j.done/j.total:0)+'%';
+    $('#go').disabled=j.running;
+    $('#result').innerHTML=j.error?`<p class="err">${esc(j.error)}</p>`:j.result?`<p>書き出しました: <a href="/api/download/${encodeURIComponent(j.result)}" download><b>${esc(j.result)}</b></a></p>`:'';
+    $('#outputs').innerHTML=s.outputs.length?'<div class="muted">書き出したファイル</div>'+s.outputs.slice().reverse().map(o=>`<div><a href="/api/download/${encodeURIComponent(o)}" download>${esc(o)}</a></div>`).join(''):'';
+    const lg=$('#log'),atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-10;lg.textContent=s.logs.join('\n');if(atBottom)lg.scrollTop=lg.scrollHeight;
+    $('#gpu').textContent=s.gpu.name?`${s.gpu.name} · VRAM ${s.gpu.mem_used}/${s.gpu.mem_total} MiB · ${s.gpu.util}%`:'GPU 未検出';
+    for(const[r,m]of Object.entries(s.models)){const d=$('#dot-'+r);if(d){d.className='dot'+(m.ready?' on':'');d.title=m.ready?'稼働中: '+m.repo:m.running?'起動中':'停止中'}}
+    $('#workdir').textContent=s.workdir;
+    renderDownloads(s.downloads||[]);
+    renderFtbqStatus(j);
+    renderResumable(j.running?[]:s.resumable);
+    if($('#jobsBox').open)loadJobs();
+  }catch(e){if(String(e.message)==='401')location.reload()}
+  setTimeout(poll,2000);
+}
+
+// ---------- URL からのモデル取得
+const dlSeen={};
+function renderDownloads(list){
+  for(const d of list){
+    const el=$(`[data-role="${d.role}"] .dl`);if(!el)continue;
+    const gb=x=>(x/2**30).toFixed(2);
+    el.innerHTML=d.status==='downloading'?`ダウンロード中: ${esc(d.label)} ${d.total?`${gb(d.done)} / ${gb(d.total)} GB (${(100*d.done/d.total).toFixed(0)}%)`:''}`
+      :d.status==='error'?`<span class="err">${esc(d.label)}: ${esc(d.error)}</span>`:`${esc(d.label)} を追加しました`;
+    if(d.status==='done'&&dlSeen[d.id]!=='done')loadModels().then(()=>renderDownloads(list));   // 候補に追加 → 自動選択を画面に反映
+    dlSeen[d.id]=d.status;
+  }
+}
+
+// ---------- タブ
+const TABS=['main','res','ftbq'];
+function showTab(name){
+  for(const t of TABS){$('#tab-'+t).hidden=t!==name;$('#tabbtn-'+t).setAttribute('aria-selected',String(t===name))}
+  try{localStorage.setItem('mct_tab',name)}catch(e){}
+  if(name==='res')loadRes();
+  if(name==='ftbq')loadFtbq();
+}
+TABS.forEach(t=>$('#tabbtn-'+t).onclick=()=>showTab(t));
+$('.tabs').addEventListener('keydown',e=>{if(e.key!=='ArrowRight'&&e.key!=='ArrowLeft')return;
+  const cur=TABS.findIndex(t=>!$('#tab-'+t).hidden),n=TABS[(cur+(e.key==='ArrowRight'?1:TABS.length-1))%TABS.length];showTab(n);$('#tabbtn-'+n).focus()});
+
+// ---------- FTB Quests
+let fqProjects=[],fqSel=null,fqPackList=[],fqPackOn={};
+const fqKeep=p=>/(^|\/)lang\/(en_us|ja_jp)(\.snbt$|\/)/.test(p)&&/\.snbt(_merged)?$/.test(p);   // 英語原文と既存の日本語訳だけ送る
+async function fqUpload(files,isDir){
+  const fd=new FormData();let n=0;
+  for(const f of files){const p=isDir?(f.webkitRelativePath||f.name):f.name;if(isDir&&!fqKeep(p))continue;fd.append('files',f);fd.append('paths',p);n++}
+  if(!n)return $('#fqUpMsg').textContent='言語ファイルが見つかりません。ftbquests フォルダを選んでください。';
+  $('#fqUpMsg').textContent=`読み込んでいます (${n} ファイル)…`;
+  try{const m=await api('/api/ftbq/upload',{method:'POST',body:fd,headers:{}});fqSel=m.id;$('#fqUpMsg').textContent=`${m.name}: 言語ファイル ${m.docs.length} 件`;loadFtbq()}
+  catch(e){$('#fqUpMsg').textContent='読み込めませんでした: '+e.message}
+}
+$('#fqPickDir').onclick=()=>$('#fqDir').click();$('#fqPickZip').onclick=()=>$('#fqZip').click();
+$('#fqDir').onchange=e=>{fqUpload(e.target.files,true);e.target.value=''};
+$('#fqZip').onchange=e=>{fqUpload(e.target.files,false);e.target.value=''};
+['dragenter','dragover'].forEach(t=>$('#fqDrop').addEventListener(t,e=>{e.preventDefault();$('#fqDrop').classList.add('over')}));
+['dragleave','drop'].forEach(t=>$('#fqDrop').addEventListener(t,e=>{e.preventDefault();$('#fqDrop').classList.remove('over')}));
+$('#fqDrop').addEventListener('drop',e=>fqUpload([...e.dataTransfer.files].filter(f=>/\.zip$/i.test(f.name)),false));
+async function loadFtbq(){
+  fqProjects=await api('/api/ftbq');if(!fqProjects.some(p=>p.id===fqSel))fqSel=fqProjects[0]?.id||null;
+  $('#fqProjects').innerHTML=fqProjects.map(p=>{const ent=p.docs.reduce((a,d)=>a+d.entries,0),ex=p.docs.reduce((a,d)=>a+d.existing_ja,0);
+    return `<div class="modcard"><div class="row"><input type="radio" name="fqp" value="${esc(p.id)}" ${p.id===fqSel?'checked':''} aria-label="${esc(p.name)}">
+      <h3 class="grow">${esc(p.name)} <span class="muted">${p.docs.length} ファイル · ${ent} 項目 · 既存の訳 ${ex} 件</span></h3>
+      ${(p.results||[]).slice(0,1).map(r=>`<a href="/api/download/${encodeURIComponent(r)}" download>最新の ZIP</a>`).join('')}
+      <button data-fqdel="${esc(p.id)}">削除</button></div>
+      <details><summary class="muted">ファイル一覧</summary><div class="tablewrap" style="max-height:30vh"><table>
+      <thead><tr><th>ファイル / 出力先</th><th>章</th><th>項目</th><th>既存の訳</th></tr></thead><tbody>
+      ${p.docs.map(d=>`<tr><td class="path" style="white-space:normal;word-break:break-all;font:12px ui-monospace,monospace">${esc(d.path)}<br><span class="arrow">${esc(d.out)}</span></td><td>${esc(d.title)}</td><td>${d.entries}</td><td>${d.existing_ja}</td></tr>`).join('')}
+      </tbody></table></div></details></div>`}).join('')||'<div class="muted">クエストブックがありません</div>';
+  fqPackList=await api('/api/ftbq/packs');
+  fqPackList.forEach(p=>{const k=p.src+'/'+p.name;if(!(k in fqPackOn))fqPackOn[k]=true});
+  $('#fqPacks').innerHTML=fqPackList.length?fqPackList.slice().reverse().map(p=>{const k=p.src+'/'+p.name;
+    return `<label class="chk"><input type="checkbox" data-fqpack="${esc(k)}" ${fqPackOn[k]?'checked':''}> <span class="tag">${p.src==='output'?'書き出し済み':'追加'}</span> ${esc(p.name)}</label>`}).join('')
+    :'<div class="muted">リソースパックがありません。Mod 同梱の日本語訳だけを使います。</div>';
+}
+// 画面は fqPackList の逆順で表示し、下ほど優先。API は「後ろほど優先」なので表示順のまま渡す
+const fqPacksReq=()=>fqPackList.filter(p=>fqPackOn[p.src+'/'+p.name]).slice().reverse();
+document.addEventListener('change',e=>{if(e.target.name==='fqp')fqSel=e.target.value;if(e.target.dataset.fqpack)fqPackOn[e.target.dataset.fqpack]=e.target.checked});
+document.addEventListener('click',async e=>{const id=e.target.dataset.fqdel;if(!id)return;
+  if(confirm('このクエストブックを削除しますか？\n書き出した ZIP は残ります。')){await post(`/api/ftbq/${encodeURIComponent(id)}/delete`);loadFtbq()}});
+$('#fqPackUp').onclick=()=>$('#fqPackFile').click();
+$('#fqPackFile').onchange=async e=>{const fd=new FormData();for(const f of e.target.files)fd.append('files',f);
+  await fetch('/api/ftbq/packs',{method:'POST',body:fd});e.target.value='';loadFtbq()};
+$('#fqNamesPv').onclick=async()=>{$('#fqNames').textContent='準備中…';
+  const r=await api('/api/ftbq/names?packs='+encodeURIComponent(JSON.stringify(fqPacksReq())));
+  $('#fqNames').innerHTML=`${r.names} 語 (Mod ${r.mods} 個${r.conflicts?` · 訳の重複 ${r.conflicts} 件`:''})<br>`+
+    (r.mods?'':'<span class="warn">Mod がありません。翻訳タブで JAR を追加してください。</span><br>')+
+    Object.entries(r.sample).slice(0,20).map(([k,v])=>`${esc(k)}: <b>${esc(v)}</b>`).join(' · ')};
+$('#fqGo').onclick=async()=>{if(!fqSel)return alert('クエストブックを選んでください');
+  try{await post(`/api/ftbq/${encodeURIComponent(fqSel)}/translate`,{use_existing_ja:$('#fqExisting').checked,packs:fqPacksReq()})}catch(e){alert(e.message)}};
+$('#fqStop').onclick=()=>post('/api/cancel');
+function renderFtbqStatus(j){
+  if($('#tab-ftbq').hidden)return;
+  // FTB Quests 以外の処理の進捗はこのタブに出さない
+  if(j.kind!=='ftbq'){j={...j,phase:j.running?'ほかの処理を実行しています':'待機中',current:'',done:0,total:0,error:null,result:null}}
+  $('#fqPhase').textContent=j.phase;$('#fqCur').textContent=j.current||'';$('#fqCnt').textContent=j.total?`${j.done}/${j.total}`:'';
+  $('#fqBar').style.width=(j.total?100*j.done/j.total:0)+'%';$('#fqGo').disabled=j.running;
+  $('#fqResult').innerHTML=j.error?`<p class="err">${esc(j.error)}</p>`:j.result&&j.result.startsWith('FTBQuests_')?`<p>書き出しました: <a href="/api/download/${encodeURIComponent(j.result)}" download><b>${esc(j.result)}</b></a></p>`:'';
+}
+
+// ---------- 追加リソース探索
+let resData={},resAnchor={};
+const resSelected=()=>Object.fromEntries(Object.entries(resData).map(([u,v])=>[u,v.files.filter(f=>f.selected).map(f=>f.path)]).filter(([,p])=>p.length));
+const selectable=f=>f.overridable&&f.entries>0;
+async function loadRes(){resData=await api('/api/resources');renderRes()}
+function renderRes(){
+  const q=$('#resQ').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const cards=[];let nFiles=0,nSel=0;
+  for(const [uid,v] of Object.entries(resData).sort((a,b)=>a[1].name.localeCompare(b[1].name))){
+    const files=v.files.filter(f=>q.every(t=>(v.name+' '+f.path).toLowerCase().includes(t)));
+    if(q.length&&!files.length)continue;
+    const ok=v.files.filter(selectable),s=ok.filter(f=>f.selected).length;nFiles+=v.files.length;nSel+=s;
+    cards.push(`<div class="modcard" data-uid="${esc(uid)}">
+      <div class="row"><input type="checkbox" class="modchk" aria-label="${esc(v.name)} を全選択" ${ok.length&&s===ok.length?'checked':''} ${ok.length?'':'disabled'} data-ind="${s>0&&s<ok.length}">
+        <h3 class="grow">${esc(v.name)} <span class="muted">選択 ${s}/${ok.length} · 検出 ${v.files.length}</span></h3>
+        <span class="tag">${v.helper?'補助モデル':'ルール'}</span></div>
+      ${v.files.length?`<div class="tablewrap" style="max-height:40vh"><table><thead><tr><th></th><th>ファイル / 出力先</th><th>形式</th><th>項目</th><th>理由</th><th></th></tr></thead><tbody>
+      ${files.map(f=>{const i=v.files.indexOf(f);return `<tr class="${selectable(f)?'':'off'}" data-i="${i}">
+        <td><input type="checkbox" class="fchk" ${f.selected?'checked':''} ${selectable(f)?'':'disabled'}></td>
+        <td class="path">${esc(f.path)}<br><span class="arrow">${f.target?esc(f.target)+(f.locale?'':' <span class="warn">(全言語で上書き)</span>'):'<span class="warn">リソースパックでは変更できません</span>'}</span></td>
+        <td>${esc(f.mode)}${f.keys&&f.keys.length&&f.mode==='json'?`<br><span class="muted">${f.keys.slice(0,4).map(esc).join(', ')}${f.keys.length>4?'…':''}</span>`:''}</td>
+        <td>${f.entries}</td><td class="desc">${f.translate?'翻訳対象':'対象外'}: ${esc(f.reason)}</td>
+        <td>${selectable(f)?`<button class="pv">表示</button>`:''}</td></tr>`}).join('')}
+      </tbody></table></div>`:'<div class="muted">翻訳対象はありません</div>'}</div>`);
+  }
+  $('#resList').innerHTML=cards.join('')||'<div class="muted">まだ調べていません。翻訳タブで Mod を選んでください。</div>';
+  document.querySelectorAll('.modchk').forEach(c=>c.indeterminate=c.dataset.ind==='true');
+  $('#resSummary').textContent=Object.keys(resData).length?`Mod ${Object.keys(resData).length} 件 · 検出 ${nFiles} ファイル · 翻訳対象 ${nSel} ファイル`:'';
+  $('#resBadge').hidden=!nSel;$('#resBadge').textContent=nSel;$('#optResCount').textContent=nSel;
+}
+const resSaveT={};
+function saveResSel(uid){clearTimeout(resSaveT[uid]);resSaveT[uid]=setTimeout(()=>post('/api/resources/select',{uid,paths:resData[uid].files.filter(f=>f.selected).map(f=>f.path)}),300)}
+$('#resList').addEventListener('click',async e=>{
+  const card=e.target.closest('.modcard');if(!card)return;const uid=card.dataset.uid,v=resData[uid];
+  if(e.target.classList.contains('modchk')){const on=e.target.checked;v.files.forEach(f=>{if(selectable(f))f.selected=on});saveResSel(uid);renderRes();return}
+  const tr=e.target.closest('tr[data-i]');if(!tr)return;const i=+tr.dataset.i,f=v.files[i];
+  if(e.target.classList.contains('pv')){
+    const p=await api(`/api/resources/preview?uid=${encodeURIComponent(uid)}&path=${encodeURIComponent(f.path)}`);
+    $('#resPreviewBox').hidden=false;
+    $('#resPreview').innerHTML=`<div class="muted">${esc(p.path)}<br>出力先: <b>${esc(p.target)}</b> · ${esc(p.mode)} · ${p.total} 項目 (先頭 30 件を表示)</div>
+      <div class="tablewrap"><table>${Object.entries(p.entries).map(([k,t])=>`<tr><td class="path" style="width:30%">${esc(k)}</td><td class="desc" style="max-width:none">${esc(t)}</td></tr>`).join('')}</table></div>`;
+    $('#resPreviewBox').scrollIntoView({behavior:'smooth'});return}
+  if(!selectable(f))return;
+  const box=e.target.classList.contains('fchk');
+  if(e.shiftKey&&resAnchor[uid]!=null){           // Shift+クリックで範囲選択 (状態はクリックした行に合わせる)
+    const on=box?e.target.checked:!f.selected,[a,b]=[resAnchor[uid],i].sort((x,y)=>x-y);
+    for(let k=a;k<=b;k++)if(selectable(v.files[k]))v.files[k].selected=on;
+  }else{f.selected=box?e.target.checked:!f.selected}
+  resAnchor[uid]=i;saveResSel(uid);renderRes();
+});
+$('#resList').addEventListener('mousedown',e=>{if(e.shiftKey)e.preventDefault()});
+$('#resPreviewClose').onclick=()=>$('#resPreviewBox').hidden=true;
+let resQT;$('#resQ').oninput=()=>{clearTimeout(resQT);resQT=setTimeout(renderRes,120)};
+async function scanRes(uids){
+  if(!uids.length)return alert('翻訳タブで Mod を選んでください');
+  try{await post('/api/resources/scan',{uids})}catch(e){return alert(e.message)}
+  const wait=async()=>{const s=await api('/api/status');$('#resPhase').textContent=s.job.running?`${s.job.phase}: ${s.job.current||''} (${s.job.done}/${s.job.total})`:(s.job.error?'処理に失敗しました: '+s.job.error:'');
+    if(s.job.running)return setTimeout(wait,1000);loadRes()};wait();
+}
+$('#resScanSel').onclick=()=>scanRes([...sel]);
+$('#resScanAll').onclick=()=>scanRes(mods.map(m=>m.uid));
+$('#resGo').onclick=async()=>{
+  const resources=resSelected();if(!Object.keys(resources).length)return alert('翻訳するファイルを選んでください');
+  const uids=Object.keys(resources);
+  try{await post('/api/translate',{uids,...commonOpts(),include_lang:$('#resWithLang').checked,
+    include_deps:$('#resWithLang').checked&&$('#optDeps').checked,resources});showTab('main')}catch(e){alert(e.message)}
+};
+
+// ---------- 途中再開 / 実行履歴
+const ST={running:'実行中',interrupted:'中断',failed:'失敗',cancelled:'キャンセル',done:'完了'};
+const jobLine=j=>`<b>${esc(j.pack_name)}</b> <span class="muted">${esc(j.id)}</span> · ${ST[j.status]||j.status} · ${j.done}/${j.total} 件 · ファイル ${j.units_done}/${j.units}`
+  +(j.helper_pending.length&&j.status!=='done'?` · 用語抽出待ち ${j.helper_pending.length} 件`:'')+(j.error?`<br><span class="err">${esc(j.error)}</span>`:'');
+let lastResumeKey='';
+function renderResumable(list){
+  $('#resumeBox').hidden=!list.length;const key=JSON.stringify(list);if(key===lastResumeKey)return;lastResumeKey=key;
+  $('#resumeList').innerHTML=list.map(j=>`<div class="row"><span class="grow">${jobLine(j)}</span>
+    <button class="primary" data-resume="${esc(j.id)}">再開</button><button data-deljob="${esc(j.id)}">削除</button></div>`).join('');
+}
+async function resumeJob(id){try{await post(`/api/jobs/${encodeURIComponent(id)}/resume`)}catch(e){alert(e.message)}}
+async function deleteJob(id){if(confirm('このジョブを削除しますか？\n翻訳メモリは残ります。')){await post(`/api/jobs/${encodeURIComponent(id)}/delete`);lastResumeKey='';loadJobs()}}
+document.addEventListener('click',e=>{const r=e.target.dataset;if(r.resume)resumeJob(r.resume);if(r.deljob)deleteJob(r.deljob);
+  if(r.hist)api(`/api/jobs/${encodeURIComponent(r.hist)}/history`).then(h=>$('#jobHist').textContent=h.map(x=>`${x.t} ${x.event} ${JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k])=>!['t','job','event'].includes(k))))}`).join('\n'))});
+async function loadJobs(){const js=await api('/api/jobs');
+  $('#jobsBody').innerHTML=js.map(j=>`<tr><td>${esc(j.pack_name)}<br><span class="muted">${esc(j.id)}</span></td><td>${ST[j.status]||j.status}</td>
+    <td>${j.done}/${j.total}</td><td>${j.resumes}</td><td>${['interrupted','failed','cancelled'].includes(j.status)?`<button data-resume="${esc(j.id)}">再開</button>`:''}
+    <button data-hist="${esc(j.id)}">履歴</button>${j.status!=='running'?`<button data-deljob="${esc(j.id)}">削除</button>`:''}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">履歴はありません</td></tr>'}
+$('#jobsBox').addEventListener('toggle',()=>{if($('#jobsBox').open)loadJobs()});
+
+// ---------- glossary
+async function loadGloss(){const g=await api('/api/glossary');
+  $('#gloss').value=Object.entries(g.user).map(([k,v])=>{const m=g.meta[k]||{};
+    return `${k} = ${v}`+(m.note||m.case?` | ${m.note||''}`:'')+(m.case?' | 区別':'')}).join('\n');
+  $('#glossInfo').textContent=`取り込み ${Object.keys(g.official).length} · 自動 ${Object.keys(g.auto).length} · 基本 ${Object.keys(g.base).length} · 翻訳メモリ ${g.tm_size}`;
+  $('#officialSum').textContent=`取り込んだ用語 (${Object.keys(g.official).length})`;
+  $('#officialBody').innerHTML=Object.entries(g.official).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}
+$('#fromJa').onclick=async()=>{
+  if(!sel.size)return alert('Mod を選んでください');
+  try{const r=await post('/api/glossary/from_ja',{uids:[...sel],include_deps:$('#optDeps').checked});
+    if(!r.mods)return alert(r.message||'日本語訳を含む Mod がありません');
+    const wait=async()=>{const s=await api('/api/status');if(s.job.running)return setTimeout(wait,1000);loadGloss()};wait()}
+  catch(e){alert(e.message)}
+};
+$('#saveGloss').onclick=async()=>{const user={},meta={};
+  $('#gloss').value.split('\n').forEach(l=>{const i=l.indexOf('=');if(i<=0)return;
+    const k=l.slice(0,i).trim(),[v,note='',flag='']=l.slice(i+1).split('|').map(s=>s.trim());if(!k||!v)return;
+    user[k]=v;const cs=/^(区別|true|case)$/i.test(flag);if(note||cs)meta[k]={note,case:cs}});
+  await post('/api/glossary',{user,meta});loadGloss()};
+// ---------- 翻訳プロンプト設定
+async function loadPrompt(){const p=await api('/api/prompt');
+  $('#pmProper').innerHTML=Object.entries(p.options.proper_nouns).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
+  $('#pmProper').value=p.proper_nouns;$('#pmCustom').value=p.custom}
+$('#pmSave').onclick=async()=>{await post('/api/prompt',{proper_nouns:$('#pmProper').value,custom:$('#pmCustom').value});
+  $('#pmMsg').textContent='保存しました';setTimeout(()=>$('#pmMsg').textContent='',2000);if(!$('#pmView').hidden)$('#pmPreview').click()};
+$('#pmPreview').onclick=async()=>{const r=await api('/api/prompt/preview?profiles=patchouli,ftbquests');
+  $('#pmView').hidden=false;$('#pmView').textContent=r.system};
+$('#clearMem').onclick=async()=>{if(confirm('翻訳メモリを削除しますか？\n自動で登録した用語も削除されます。')){await post('/api/memory/clear');loadGloss()}};
+
+setInterval(()=>post('/api/heartbeat').catch(()=>{}),60000);
+loadMods();loadModels();loadGloss();loadPrompt();poll();loadRes();
+try{if(localStorage.getItem('mct_tab')==='res')showTab('res')}catch(e){}
+</script>
+</body>
+</html>

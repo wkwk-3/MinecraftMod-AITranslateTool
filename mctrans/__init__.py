@@ -1,0 +1,1 @@
+"""MC MOD Translator"""
