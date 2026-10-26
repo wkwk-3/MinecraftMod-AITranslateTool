@@ -940,14 +940,30 @@ def heartbeat():
     return {"t": time.time()}
 
 
+HELPER_TIMEOUT = 240        # 補助モデル 1 回の待ち時間 (秒)。GPU なら数十秒で返る
+HELPER_MAX_FAILURES = 2     # 連続でこの回数失敗したら補助モデルを止め、以降はルールだけで処理する
+
+
 def _helper_chat(system: str, user: str) -> dict | None:
     srv = S.servers["helper"]
     if not srv.running():
         return None
+    t0 = time.time()
     try:
-        return tr.parse_json_obj(srv.chat(system + tr.DATA_GUARD, user, temperature=0.1, max_tokens=2048, json_mode=True))
+        r = tr.parse_json_obj(srv.chat(system + tr.DATA_GUARD, user, temperature=0.1, max_tokens=1024,
+                                       json_mode=True, timeout=HELPER_TIMEOUT))
+        S.helper_failures = 0
+        if time.time() - t0 > 60:
+            S.log(f"[helper] 応答に {time.time() - t0:.0f} 秒かかりました")
+        return r
     except Exception as e:
-        S.log(f"[helper] エラー: {e}")
+        S.helper_failures = getattr(S, "helper_failures", 0) + 1
+        S.log(f"[helper] エラー ({time.time() - t0:.0f} 秒): {e}")
+        if S.helper_failures >= HELPER_MAX_FAILURES:
+            S.log("[helper] 応答がないため補助モデルを止め、以降はルールだけで処理します。llama-server の最近のログ:\n"
+                  + srv.recent_log())
+            srv.stop()      # 生成中の処理も止める (-np 1 なので次の依頼が詰まらないように)
+            S.helper_failures = 0
         return None
 
 
@@ -960,8 +976,11 @@ def _glossary_from_ja(uid: str, lang_by_ns: dict) -> int:
         return 0
     terms = tr.rule_glossary(pairs)
     if S.servers["helper"].running():
-        for i in range(0, min(len(pairs), 600), 120):     # 長い MOD は分割して渡す
-            body = "\n".join(f"| {en} | {ja} |" for _, en, ja in pairs[i:i + 120])
+        # 1 回に渡す量を抑える (長い MOD は分割し、最大 200 件まで)
+        for i in range(0, min(len(pairs), 200), 40):
+            if not S.servers["helper"].running():
+                break
+            body = "\n".join(f"| {en[:200]} | {ja[:200]} |" for _, en, ja in pairs[i:i + 40])
             r = _helper_chat(tr.HELPER_JA_GLOSSARY_PROMPT,
                              f"## MOD: {S.mods[uid].name}\n| 英語 | 日本語 |\n|---|---|\n{body}") or {}
             terms.update({k: v for k, v in tr.verify_terms(r.get("terms") or {}, pairs).items() if k not in terms})

@@ -246,9 +246,29 @@ class LlamaServer:
                 raise RuntimeError(f"[{self.role}] llama-server が終了しました (終了コード {self.proc.returncode}):\n{detail}")
             if self.ready():
                 log(f"[{self.role}] 準備完了 ({time.time() - t0:.0f}s)")
+                for line in self.device_report():
+                    log(f"[{self.role}] {line}")
                 return
             time.sleep(2)
         raise RuntimeError(f"[{self.role}] 起動タイムアウト")
+
+    DEVICE_RE = re.compile(r"ggml_cuda_init|CUDA\d? *:|using device|offloaded \d+/\d+ layers|no usable GPU|"
+                           r"failed to initialize|compiled without GPU", re.I)
+
+    def device_report(self) -> list[str]:
+        """llama-server の起動ログから GPU の使用状況を抜き出す。GPU を使っていなければ警告を付ける。"""
+        lines = [l.strip() for l in self.log_tail if self.DEVICE_RE.search(l)][:6]
+        offload = [re.search(r"offloaded (\d+)/(\d+) layers", l) for l in self.log_tail]
+        offload = [m for m in offload if m]
+        uses_gpu = any(int(m.group(1)) > 0 for m in offload) or \
+            any(re.search(r"CUDA\d? *: .*(buffer|model) size", l) for l in self.log_tail)
+        if not uses_gpu:
+            lines.append("警告: GPU が使われていません。CPU で動くため非常に遅くなります。"
+                         "ランタイムのタイプが GPU か、セットアップで CUDA が有効になっているかを確認してください。")
+        return lines
+
+    def recent_log(self, n: int = 15) -> str:
+        return "\n".join(self.log_tail[-n:])
 
     @staticmethod
     def _diagnose(binary: str) -> str:
@@ -277,12 +297,12 @@ class LlamaServer:
         self.proc = None
 
     def chat(self, system: str, user: str, temperature: float = 0.2, max_tokens: int = 4096,
-             json_mode: bool = False) -> str:
+             json_mode: bool = False, timeout: float = 1800) -> str:
         body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": temperature, "max_tokens": max_tokens, "stream": False}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
-        r = requests.post(self.base_url + "/v1/chat/completions", json=body, timeout=1800)
+        r = requests.post(self.base_url + "/v1/chat/completions", json=body, timeout=timeout)
         r.raise_for_status()
         text = r.json()["choices"][0]["message"]["content"] or ""
         return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()

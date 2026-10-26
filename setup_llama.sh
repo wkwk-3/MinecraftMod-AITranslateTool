@@ -29,6 +29,11 @@ CUDA_FLAGS="-DGGML_CUDA=ON"
 [ -n "$ARCH" ] && CUDA_FLAGS="$CUDA_FLAGS -DCMAKE_CUDA_ARCHITECTURES=$ARCH"
 command -v nvcc >/dev/null || [ -x /usr/local/cuda/bin/nvcc ] || CUDA_FLAGS="-DGGML_CUDA=OFF"
 export PATH=/usr/local/cuda/bin:$PATH
+if [[ "$CUDA_FLAGS" == *"GGML_CUDA=ON"* ]]; then
+  echo "CUDA: 有効 (GPU アーキテクチャ: ${ARCH:-自動})"
+else
+  echo "警告: nvcc が見つからないため CUDA なしでビルドします。翻訳は CPU で動き、非常に遅くなります。"
+fi
 cmake -S "$DIR" -B "$DIR/build" $CUDA_FLAGS -DBUILD_SHARED_LIBS=OFF \
   -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
 cmake --build "$DIR/build" --target llama-server -j"$(nproc)"
