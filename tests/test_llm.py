@@ -56,9 +56,26 @@ def test_server_start_reports_crash(monkeypatch, tmp_path):
     # 起動直後に終了するバイナリ → ハングせず、ログ付きで例外
     monkeypatch.setattr(llm, "find_server_binary", lambda: sys.executable)
     s = llm.LlamaServer("t", 18999)
-    with pytest.raises(RuntimeError, match="終了しました"):
+    with pytest.raises(RuntimeError, match="終了しました") as e:
         s.start(str(tmp_path / "no_such_module"), timeout=30)
     assert not s.running()
+    assert "終了コード" in str(e.value) and "No module named" in str(e.value)   # 終了直前の出力 (理由) を含む
+
+
+def test_server_crash_without_output_is_diagnosed(monkeypatch, tmp_path):
+    # 出力を読む前に終了した場合 (共有ライブラリ不足など) は、単体で実行して理由を得る
+    monkeypatch.setattr(llm, "find_server_binary", lambda: sys.executable)
+    monkeypatch.setattr(llm.LlamaServer, "_pump", lambda self: None)
+    monkeypatch.setattr(llm.LlamaServer, "_diagnose", staticmethod(
+        lambda b: "error while loading shared libraries: libllama.so"))
+    with pytest.raises(RuntimeError, match="libllama.so"):
+        llm.LlamaServer("t", 18997).start(str(tmp_path / "no_such_module"), timeout=30)
+
+
+def test_diagnose_reports_output():
+    msg = llm.LlamaServer._diagnose(sys.executable)          # python --version は出力あり
+    assert "Python" in msg
+    assert "実行できません" in llm.LlamaServer._diagnose("/no/such/llama-server")
 
 
 def test_server_missing_binary(monkeypatch):

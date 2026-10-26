@@ -232,18 +232,34 @@ class LlamaServer:
         if n_cpu_moe > 0:
             cmd += ["--n-cpu-moe", str(n_cpu_moe)]
         log(f"[{self.role}] 起動: {' '.join(cmd)}")
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        self.log_tail = []
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                     encoding="utf-8", errors="replace")
         self.model_path = model_path
-        threading.Thread(target=self._pump, daemon=True).start()
+        pump = threading.Thread(target=self._pump, daemon=True)
+        pump.start()
         t0 = time.time()
         while time.time() - t0 < timeout:
             if self.proc.poll() is not None:
-                raise RuntimeError(f"[{self.role}] llama-server が終了しました:\n" + "\n".join(self.log_tail[-30:]))
+                pump.join(3)          # 終了直前の出力 (エラーの理由) を読み切ってから報告する
+                detail = "\n".join(self.log_tail[-30:]) or self._diagnose(binary)
+                raise RuntimeError(f"[{self.role}] llama-server が終了しました (終了コード {self.proc.returncode}):\n{detail}")
             if self.ready():
                 log(f"[{self.role}] 準備完了 ({time.time() - t0:.0f}s)")
                 return
             time.sleep(2)
         raise RuntimeError(f"[{self.role}] 起動タイムアウト")
+
+    @staticmethod
+    def _diagnose(binary: str) -> str:
+        """出力がないまま終了した場合に、単体で実行して理由 (ライブラリ不足など) を得る。"""
+        try:
+            r = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30,
+                               encoding="utf-8", errors="replace")
+            out = (r.stderr or r.stdout).strip()
+            return out[-1500:] if out else f"出力なし (llama-server --version の終了コード {r.returncode})"
+        except Exception as e:
+            return f"llama-server を実行できません: {e}"
 
     def _pump(self):
         assert self.proc and self.proc.stdout
