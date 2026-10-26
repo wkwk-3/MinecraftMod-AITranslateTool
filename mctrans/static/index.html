@@ -257,7 +257,13 @@ textarea{resize:vertical;min-height:72px}
 </main>
 <script>
 const $=s=>document.querySelector(s);
-const api=async(p,o={})=>{const r=await fetch(p,{headers:{'content-type':'application/json'},...o});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json()};
+// アクセストークン: URL から読み取ってタブ内に保持し、アドレス欄からは消す。通信のたびにヘッダーで送る
+const TOKEN=(()=>{const q=new URLSearchParams(location.search).get('token');
+  try{if(q)sessionStorage.setItem('mct_token',q);const t=q||sessionStorage.getItem('mct_token')||'';
+    if(q)history.replaceState(null,'',location.pathname);return t}catch(e){return q||''}})();
+const authFetch=(p,o={})=>fetch(p,{...o,headers:{...(o.headers||{}),'x-mct-token':TOKEN}});
+const dl=name=>`/api/download/${encodeURIComponent(name)}?token=${encodeURIComponent(TOKEN)}`;
+const api=async(p,o={})=>{const r=await authFetch(p,{...o,headers:{'content-type':'application/json',...(o.headers||{})}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json()};
 const post=(p,b)=>api(p,{method:'POST',body:JSON.stringify(b||{})});
 let mods=[],view=[],sel=new Set(),anchor=null,cursor=null,sortK='name',sortDir=1;
 
@@ -271,7 +277,7 @@ drop.addEventListener('drop',e=>upload(e.dataTransfer.files));
 async function upload(files){
   if(!files.length)return;const fd=new FormData();for(const f of files)fd.append('files',f);
   drop.firstChild.textContent=`読み込んでいます (${files.length} 件)… `;
-  try{const r=await fetch('/api/upload',{method:'POST',body:fd});const j=await r.json();j.added.forEach(u=>sel.add(u))}
+  try{const r=await authFetch('/api/upload',{method:'POST',body:fd});const j=await r.json();j.added.forEach(u=>sel.add(u))}
   finally{drop.firstChild.textContent='JAR をドロップ、または ';$('#file').value='';loadMods()}
 }
 
@@ -401,8 +407,8 @@ async function poll(){
     $('#phase').textContent=j.phase;$('#cur').textContent=j.current||'';
     $('#cnt').textContent=j.total?`${j.done}/${j.total}`:'';$('#barIn').style.width=(j.total?100*j.done/j.total:0)+'%';
     $('#go').disabled=j.running;
-    $('#result').innerHTML=j.error?`<p class="err">${esc(j.error)}</p>`:j.result?`<p>書き出しました: <a href="/api/download/${encodeURIComponent(j.result)}" download><b>${esc(j.result)}</b></a></p>`:'';
-    $('#outputs').innerHTML=s.outputs.length?'<div class="muted">書き出したファイル</div>'+s.outputs.slice().reverse().map(o=>`<div><a href="/api/download/${encodeURIComponent(o)}" download>${esc(o)}</a></div>`).join(''):'';
+    $('#result').innerHTML=j.error?`<p class="err">${esc(j.error)}</p>`:j.result?`<p>書き出しました: <a href="${dl(j.result)}" download><b>${esc(j.result)}</b></a></p>`:'';
+    $('#outputs').innerHTML=s.outputs.length?'<div class="muted">書き出したファイル</div>'+s.outputs.slice().reverse().map(o=>`<div><a href="${dl(o)}" download>${esc(o)}</a></div>`).join(''):'';
     const lg=$('#log'),atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-10;lg.textContent=s.logs.join('\n');if(atBottom)lg.scrollTop=lg.scrollHeight;
     $('#gpu').textContent=s.gpu.name?`${s.gpu.name} · VRAM ${s.gpu.mem_used}/${s.gpu.mem_total} MiB · ${s.gpu.util}%`:'GPU 未検出';
     for(const[r,m]of Object.entries(s.models)){const d=$('#dot-'+r);if(d){d.className='dot'+(m.ready?' on':'');d.title=m.ready?'稼働中: '+m.repo:m.running?'起動中':'停止中'}}
@@ -411,7 +417,7 @@ async function poll(){
     renderFtbqStatus(j);
     renderResumable(j.running?[]:s.resumable);
     if($('#jobsBox').open)loadJobs();
-  }catch(e){if(String(e.message)==='401')location.reload()}
+  }catch(e){if(String(e.message)==='401'||e.message==='unauthorized'){$('#phase').textContent='接続が切れました。Colab に表示された URL から開き直してください。';return}}
   setTimeout(poll,2000);
 }
 
@@ -448,7 +454,7 @@ async function fqUpload(files,isDir){
   for(const f of files){const p=isDir?(f.webkitRelativePath||f.name):f.name;if(isDir&&!fqKeep(p))continue;fd.append('files',f);fd.append('paths',p);n++}
   if(!n)return $('#fqUpMsg').textContent='言語ファイルが見つかりません。ftbquests フォルダを選んでください。';
   $('#fqUpMsg').textContent=`読み込んでいます (${n} ファイル)…`;
-  try{const m=await api('/api/ftbq/upload',{method:'POST',body:fd,headers:{}});fqSel=m.id;$('#fqUpMsg').textContent=`${m.name}: 言語ファイル ${m.docs.length} 件`;loadFtbq()}
+  try{const r0=await authFetch('/api/ftbq/upload',{method:'POST',body:fd});if(!r0.ok)throw new Error((await r0.json().catch(()=>({}))).detail||r0.status);const m=await r0.json();fqSel=m.id;$('#fqUpMsg').textContent=`${m.name}: 言語ファイル ${m.docs.length} 件`;loadFtbq()}
   catch(e){$('#fqUpMsg').textContent='読み込めませんでした: '+e.message}
 }
 $('#fqPickDir').onclick=()=>$('#fqDir').click();$('#fqPickZip').onclick=()=>$('#fqZip').click();
@@ -462,7 +468,7 @@ async function loadFtbq(){
   $('#fqProjects').innerHTML=fqProjects.map(p=>{const ent=p.docs.reduce((a,d)=>a+d.entries,0),ex=p.docs.reduce((a,d)=>a+d.existing_ja,0);
     return `<div class="modcard"><div class="row"><input type="radio" name="fqp" value="${esc(p.id)}" ${p.id===fqSel?'checked':''} aria-label="${esc(p.name)}">
       <h3 class="grow">${esc(p.name)} <span class="muted">${p.docs.length} ファイル · ${ent} 項目 · 既存の訳 ${ex} 件</span></h3>
-      ${(p.results||[]).slice(0,1).map(r=>`<a href="/api/download/${encodeURIComponent(r)}" download>最新の ZIP</a>`).join('')}
+      ${(p.results||[]).slice(0,1).map(r=>`<a href="${dl(r)}" download>最新の ZIP</a>`).join('')}
       <button data-fqdel="${esc(p.id)}">削除</button></div>
       <details><summary class="muted">ファイル一覧</summary><div class="tablewrap" style="max-height:30vh"><table>
       <thead><tr><th>ファイル / 出力先</th><th>章</th><th>項目</th><th>既存の訳</th></tr></thead><tbody>
@@ -481,7 +487,7 @@ document.addEventListener('click',async e=>{const id=e.target.dataset.fqdel;if(!
   if(confirm('このクエストブックを削除しますか？\n書き出した ZIP は残ります。')){await post(`/api/ftbq/${encodeURIComponent(id)}/delete`);loadFtbq()}});
 $('#fqPackUp').onclick=()=>$('#fqPackFile').click();
 $('#fqPackFile').onchange=async e=>{const fd=new FormData();for(const f of e.target.files)fd.append('files',f);
-  await fetch('/api/ftbq/packs',{method:'POST',body:fd});e.target.value='';loadFtbq()};
+  await authFetch('/api/ftbq/packs',{method:'POST',body:fd});e.target.value='';loadFtbq()};
 $('#fqNamesPv').onclick=async()=>{$('#fqNames').textContent='準備中…';
   const r=await api('/api/ftbq/names?packs='+encodeURIComponent(JSON.stringify(fqPacksReq())));
   $('#fqNames').innerHTML=`${r.names} 語 (Mod ${r.mods} 個${r.conflicts?` · 訳の重複 ${r.conflicts} 件`:''})<br>`+
@@ -496,7 +502,7 @@ function renderFtbqStatus(j){
   if(j.kind!=='ftbq'){j={...j,phase:j.running?'ほかの処理を実行しています':'待機中',current:'',done:0,total:0,error:null,result:null}}
   $('#fqPhase').textContent=j.phase;$('#fqCur').textContent=j.current||'';$('#fqCnt').textContent=j.total?`${j.done}/${j.total}`:'';
   $('#fqBar').style.width=(j.total?100*j.done/j.total:0)+'%';$('#fqGo').disabled=j.running;
-  $('#fqResult').innerHTML=j.error?`<p class="err">${esc(j.error)}</p>`:j.result&&j.result.startsWith('FTBQuests_')?`<p>書き出しました: <a href="/api/download/${encodeURIComponent(j.result)}" download><b>${esc(j.result)}</b></a></p>`:'';
+  $('#fqResult').innerHTML=j.error?`<p class="err">${esc(j.error)}</p>`:j.result&&j.result.startsWith('FTBQuests_')?`<p>書き出しました: <a href="${dl(j.result)}" download><b>${esc(j.result)}</b></a></p>`:'';
 }
 
 // ---------- 追加リソース探索

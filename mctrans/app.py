@@ -92,19 +92,21 @@ async def auth(request: Request, call_next):
 
 
 async def _auth(request: Request, call_next):
-    q = request.query_params.get("token")
-    if q and hmac.compare_digest(q, TOKEN):
-        resp = RedirectResponse(request.url.path)   # トークンを含まない URL に移動 (履歴に残さない)
-        # ngrok / cloudflared は HTTPS をここで HTTP に変換するので、転送元のプロトコルも見る
-        https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
-        resp.set_cookie("mct_token", TOKEN, httponly=True, samesite="strict", secure=https)
-        return resp
-    supplied = request.cookies.get("mct_token") or request.headers.get("x-mct-token") or ""
+    # トークンは URL (?token=)・ヘッダー (x-mct-token)・Cookie のどれでも受け付ける。
+    # Colab の画面などのリンクから開くと、ブラウザの設定によっては Cookie が送られないため、
+    # 画面側はトークンを保持してヘッダーで送る (Cookie は補助)。
+    q = request.query_params.get("token") or ""
+    supplied = q or request.headers.get("x-mct-token") or request.cookies.get("mct_token") or ""
     if not hmac.compare_digest(supplied, TOKEN):
         if request.url.path.startswith("/api"):
             return JSONResponse({"detail": "unauthorized"}, 401)
         return HTMLResponse("<h3>アクセストークンが必要です</h3><p>Colab またはターミナルに表示された URL から開いてください。</p>", 401)
-    return await call_next(request)
+    resp = await call_next(request)
+    if q and not request.url.path.startswith("/api"):
+        # ngrok / cloudflared は HTTPS をここで HTTP に変換するので、転送元のプロトコルも見る
+        https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+        resp.set_cookie("mct_token", TOKEN, httponly=True, samesite="lax", secure=https)
+    return resp
 
 
 @app.get("/")

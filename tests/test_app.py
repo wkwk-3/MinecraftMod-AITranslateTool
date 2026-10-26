@@ -66,9 +66,13 @@ def test_auth_required():
     assert c.get("/").status_code == 401
     assert c.get("/api/mods", headers={"x-mct-token": "wrong"}).status_code == 401
     assert c.get("/api/mods", headers={"x-mct-token": "test-token"}).status_code == 200
+    # ?token= 付きなら転送せずにそのまま画面を返す (別サイトのリンクから開いても Cookie に頼らない)
     r = c.get("/?token=test-token", follow_redirects=False)
-    assert r.status_code == 307 and "mct_token=test-token" in r.headers["set-cookie"]
-    assert "httponly" in r.headers["set-cookie"].lower()
+    assert r.status_code == 200 and "MC MOD Translator" in r.text
+    ck = r.headers["set-cookie"].lower()
+    assert "mct_token=test-token" in ck and "httponly" in ck and "samesite=lax" in ck
+    assert c.get("/api/download/none.zip?token=test-token").status_code == 404   # ダウンロードは URL のトークンでも可
+    assert "set-cookie" not in c.get("/api/mods?token=test-token").headers        # API では Cookie を発行しない
     assert TestClient(A.app).get("/?token=bad", follow_redirects=False).status_code == 401
 
 
@@ -236,6 +240,6 @@ def test_security_headers_and_cookie():
     assert r.status_code == 401 and r.headers["x-frame-options"] == "DENY"
     assert r.headers["referrer-policy"] == "no-referrer" and r.headers["cache-control"] == "no-store"
     r = TestClient(A.app).get("/?token=test-token", follow_redirects=False, headers={"x-forwarded-proto": "https"})
-    assert "secure" in r.headers["set-cookie"].lower() and r.headers["location"] == "/"
+    assert "secure" in r.headers["set-cookie"].lower() and r.status_code == 200
     r = TestClient(A.app).get("/?token=test-token", follow_redirects=False)
     assert "secure" not in r.headers["set-cookie"].lower()      # ローカル (http) では Secure を付けない
