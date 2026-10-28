@@ -27,7 +27,7 @@ def llama_block():
     return CELL2[start:end]
 
 
-def run_block(tmp_path, save: bool, monkeypatch):
+def run_block(tmp_path, save: bool, monkeypatch, prebuilt_works: bool = True):
     content = tmp_path / "content"
     builds = []
 
@@ -42,7 +42,15 @@ def run_block(tmp_path, save: bool, monkeypatch):
     code = code.replace("!bash setup_llama.sh {LLAMA_DIR}", "fake_setup(LLAMA_DIR)")
     ok = types.SimpleNamespace(returncode=0, stdout="version", stderr="")
     dev = types.SimpleNamespace(returncode=0, stdout="CUDA0: Tesla T4", stderr="")
-    fake_sub = types.SimpleNamespace(run=lambda args, **k: dev if "--list-devices" in args else ok)
+    bad = types.SimpleNamespace(returncode=1, stdout="", stderr="version `GLIBC_2.38' not found")
+
+    def run(args, **k):
+        if "--list-devices" in args:
+            return dev
+        if "llama-prebuilt" in args[0].replace("\\", "/") and not prebuilt_works:
+            return bad
+        return ok
+    fake_sub = types.SimpleNamespace(run=run)
     monkeypatch.setattr(os, "chmod", lambda *a: None)
     env = {"os": os, "shutil": shutil, "subprocess": fake_sub, "fake_setup": fake_setup,
            "SAVE_LLAMA_TO_DRIVE": save, "LLAMA_DRIVE_DIR": "MyDrive/llama"}
@@ -63,3 +71,42 @@ def test_on_saves_then_loads_from_drive(tmp_path, monkeypatch):
     builds, drive_file, env = run_block(tmp_path, True, monkeypatch)
     assert builds == []                                                    # 2 回目: ドライブから読み込み、ビルドしない
     assert open(env["LLAMA_BIN"]).read() == "built"
+
+
+def put_official_packs(tmp_path):
+    """ドライブに公式の Linux CUDA 版 (tar.gz) を置いた状態を作る。"""
+    import io
+    import tarfile
+    d = tmp_path / "content/drive/MyDrive/llama"
+    d.mkdir(parents=True, exist_ok=True)
+    for name, files in [("llama-b1-bin-ubuntu-cuda-12.8-x64", {"llama-server": b"bin", "libllama.so.0": b"so"}),
+                        ("cudart-llama-b1-bin-ubuntu-cuda-12.8-x64", {"libcudart.so.12": b"so"})]:
+        prefix = name.replace("-bin-ubuntu-cuda-12.8-x64", "") if name.startswith("llama") else name
+        with tarfile.open(d / f"{name}.tar.gz", "w:gz") as t:
+            for fn, data in files.items():
+                info = tarfile.TarInfo(f"{prefix}/{fn}")
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+
+
+def test_official_linux_build_on_drive_is_used(tmp_path, monkeypatch):
+    put_official_packs(tmp_path)
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    builds, drive_file, env = run_block(tmp_path, True, monkeypatch)
+    assert builds == [] and env["USING_PREBUILT"]                          # ビルドしない
+    assert env["LLAMA_BIN"].replace("\\", "/").endswith("llama-prebuilt/llama-b1/llama-server")
+    assert "llama-prebuilt" in os.environ["LD_LIBRARY_PATH"]               # ライブラリの場所を llama-server に渡す
+    assert not drive_file.exists()                                         # 公式版はそのまま。別に保存しない
+
+
+def test_official_build_not_working_falls_back_to_build(tmp_path, monkeypatch):
+    put_official_packs(tmp_path)
+    builds, drive_file, env = run_block(tmp_path, True, monkeypatch, prebuilt_works=False)
+    assert len(builds) == 1 and not env["USING_PREBUILT"]                  # glibc が合わない等 → ビルドする
+    assert drive_file.read_text() == "built"                              # ビルドしたものは保存して次回に使う
+
+
+def test_official_build_ignored_when_setting_off(tmp_path, monkeypatch):
+    put_official_packs(tmp_path)
+    builds, _, env = run_block(tmp_path, False, monkeypatch)
+    assert len(builds) == 1 and not env["USING_PREBUILT"]

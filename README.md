@@ -39,6 +39,8 @@ Google Colab の GPU で動かすことを想定しています。手元の PC �
 | `SAVE_LLAMA_TO_DRIVE` | llama.cpp (llama-server) をドライブに保存し、次回からそこから読み込む。既定はオフ (毎回ビルドする) |
 | `LLAMA_DRIVE_DIR` | llama-server の保存先・読み込み元。既定は `MyDrive/llama`。`SAVE_LLAMA_TO_DRIVE` がオンのときだけ使う |
 
+`LLAMA_DRIVE_DIR` に llama.cpp 公式の Linux CUDA 版 (`llama-bXXXX-bin-ubuntu-cuda-12.8-x64.tar.gz` と `cudart-llama-bXXXX-bin-ubuntu-cuda-12.8-x64.tar.gz`) を置くと、展開してそれを使います。Colab の環境に合わずに起動できない場合は、自動でビルドに切り替えます。tar.gz は展開せずにそのままドライブに置いてください。
+
 | 接続方法 | 必要なもの | 備考 |
 |---|---|---|
 | ngrok | `NGROK_AUTHTOKEN` | 既定 |
