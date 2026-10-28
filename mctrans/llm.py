@@ -19,16 +19,17 @@ QUANT_PREFERENCE = ["Q4_K_M", "IQ4_XS", "Q4_K_S", "Q3_K_M", "Q3_K_L", "Q4_0", "Q
 
 PRESETS = {
     "translator": [
+        # 翻訳には Index-Translate だけを使う (専用の instTrans 形式で依頼する)
         {"repo": DEFAULT_TRANSLATE_REPO, "label": "Index-Translate 35B-A3B preview (既定)"},
-        {"repo": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF", "label": "Qwen3 30B-A3B Instruct 2507"},
-        {"repo": "mradermacher/Sakura-14B-Qwen2.5-v1.0-GGUF", "label": "Sakura 14B (日本語特化)"},
-        {"repo": "Qwen/Qwen2.5-7B-Instruct-GGUF", "label": "Qwen2.5 7B Instruct (軽量)"},
+        {"repo": "IndexTeam/Index-Translate-9B-GGUF", "label": "Index-Translate 9B"},
+        {"repo": "IndexTeam/Index-Translate-2B-GGUF", "label": "Index-Translate 2B (軽量)"},
     ],
     "helper": [
-        {"repo": DEFAULT_HELPER_REPO, "label": "Qwen2.5 3B Instruct (既定)"},
+        # 既定は使わない (用語集・追加リソースはルールで処理する)
+        {"repo": "", "label": "使わない (既定)"},
+        {"repo": DEFAULT_HELPER_REPO, "label": "Qwen2.5 3B Instruct"},
         {"repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF", "label": "Qwen3 4B Instruct 2507"},
         {"repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "label": "Qwen2.5 1.5B Instruct"},
-        {"repo": "", "label": "使わない"},
     ],
 }
 
@@ -196,6 +197,16 @@ def download_from_url(info: dict, cache_dir: str, log=print, progress=None) -> s
     return str(dest)
 
 
+def gpu_used_mib() -> int | None:
+    """GPU 全体の使用メモリ (MiB)。取得できなければ None。"""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return int(out.splitlines()[0])
+    except Exception:
+        return None
+
+
 class LlamaServer:
     def __init__(self, role: str, port: int):
         self.role = role
@@ -225,6 +236,7 @@ class LlamaServer:
               parallel: int = 1, log=print, timeout: int = 1800):
         self.stop()
         binary = find_server_binary()
+        vram_before = gpu_used_mib()
         if not binary:
             raise RuntimeError("llama-server が見つかりません。セットアップセルを実行するか LLAMA_SERVER 環境変数を設定してください。")
         cmd = [binary, "-m", model_path, "--host", "127.0.0.1", "--port", str(self.port),
@@ -246,7 +258,8 @@ class LlamaServer:
                 raise RuntimeError(f"[{self.role}] llama-server が終了しました (終了コード {self.proc.returncode}):\n{detail}")
             if self.ready():
                 log(f"[{self.role}] 準備完了 ({time.time() - t0:.0f}s)")
-                for line in self.device_report():
+                model_mib = int(Path(model_path).stat().st_size / 2**20) if Path(model_path).exists() else 0
+                for line in self.device_report(vram_before, gpu_used_mib(), model_mib):
                     log(f"[{self.role}] {line}")
                 return
             time.sleep(2)
@@ -255,13 +268,21 @@ class LlamaServer:
     DEVICE_RE = re.compile(r"ggml_cuda_init|CUDA\d? *:|using device|offloaded \d+/\d+ layers|no usable GPU|"
                            r"failed to initialize|compiled without GPU", re.I)
 
-    def device_report(self) -> list[str]:
-        """llama-server の起動ログから GPU の使用状況を抜き出す。GPU を使っていなければ警告を付ける。"""
+    def device_report(self, vram_before: int | None = None, vram_after: int | None = None,
+                      model_mib: int = 0) -> list[str]:
+        """GPU の使用状況。ログに載っていればそれを使い、なければ起動前後の GPU メモリの増加で判定する。
+        (新しい llama.cpp は既定ではデバイスの情報をログに出さない)"""
         lines = [l.strip() for l in self.log_tail if self.DEVICE_RE.search(l)][:6]
-        offload = [re.search(r"offloaded (\d+)/(\d+) layers", l) for l in self.log_tail]
-        offload = [m for m in offload if m]
-        uses_gpu = any(int(m.group(1)) > 0 for m in offload) or \
-            any(re.search(r"CUDA\d? *: .*(buffer|model) size", l) for l in self.log_tail)
+        offload = [m for m in (re.search(r"offloaded (\d+)/(\d+) layers", l) for l in self.log_tail) if m]
+        if offload:
+            uses_gpu = any(int(m.group(1)) > 0 for m in offload)
+        elif vram_before is not None and vram_after is not None:
+            grown = vram_after - vram_before
+            uses_gpu = grown >= min(300, max(model_mib // 2, 50))
+            if uses_gpu:
+                lines.append(f"GPU に読み込みました (GPU メモリ +{grown} MiB)")
+        else:
+            return lines             # GPU の情報が取れない環境では判定しない
         if not uses_gpu:
             lines.append("警告: GPU が使われていません。CPU で動くため非常に遅くなります。"
                          "ランタイムのタイプが GPU か、セットアップで CUDA が有効になっているかを確認してください。")
@@ -297,9 +318,11 @@ class LlamaServer:
         self.proc = None
 
     def chat(self, system: str, user: str, temperature: float = 0.2, max_tokens: int = 4096,
-             json_mode: bool = False, timeout: float = 1800) -> str:
-        body = {"messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "temperature": temperature, "max_tokens": max_tokens, "stream": False}
+             json_mode: bool = False, timeout: float = 1800, extra: dict | None = None) -> str:
+        """system が空なら user だけを送る。extra は llama-server へそのまま渡す (chat_template_kwargs など)。"""
+        messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": user}]
+        body = {"messages": messages, "temperature": temperature, "max_tokens": max_tokens, "stream": False,
+                **(extra or {})}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         r = requests.post(self.base_url + "/v1/chat/completions", json=body, timeout=timeout)

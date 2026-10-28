@@ -126,7 +126,8 @@ def wait_job(c, timeout=30):
 
 
 def configure(c, url, helper=True):
-    c.post("/api/models/config", json={"role": "translator", "url": url})
+    # 偽の LLM は汎用形式の依頼を解釈するので、テストでは generic を使う
+    c.post("/api/models/config", json={"role": "translator", "url": url, "prompt_style": "generic"})
     c.post("/api/models/config", json={"role": "helper", "url": url if helper else "", "repo": ""})
 
 
@@ -223,7 +224,7 @@ def test_model_without_binary_fails_cleanly(client, monkeypatch):
     monkeypatch.setattr(A.llm, "list_gguf", lambda repo: [{"file": "m-Q4_K_M.gguf", "size": 1}])
     monkeypatch.setattr(A.llm, "download", lambda *a, **k: "/nonexistent.gguf")
     monkeypatch.setattr(A.llm, "find_server_binary", lambda: None)
-    client.post("/api/models/config", json={"role": "translator", "repo": "x/y"})
+    client.post("/api/models/config", json={"role": "translator", "repo": "IndexTeam/Index-Translate-2B-GGUF"})
     client.post("/api/models/config", json={"role": "helper", "repo": ""})
     client.post("/api/translate", json={"uids": ["lib.jar"]})
     j = wait_job(client)

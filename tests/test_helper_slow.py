@@ -51,4 +51,10 @@ def test_device_report_cpu_only_warns():
     r = _srv(["load_tensors: offloaded 0/37 layers to GPU", "load_tensors: CPU_Mapped model buffer size = 2600 MiB"]
              ).device_report()
     assert any("GPU が使われていません" in l for l in r)
-    assert any("GPU が使われていません" in l for l in _srv([]).device_report())
+
+
+def test_device_report_by_vram_growth():
+    # 新しい llama.cpp はデバイス情報をログに出さない → GPU メモリの増加で判定する
+    assert any("+1100 MiB" in l for l in _srv([]).device_report(1400, 2500, 1000))
+    assert any("GPU が使われていません" in l for l in _srv([]).device_report(1400, 1420, 1000))
+    assert _srv([]).device_report(None, None, 1000) == []          # nvidia-smi がない環境では判定しない

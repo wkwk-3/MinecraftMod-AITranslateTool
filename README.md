@@ -26,7 +26,7 @@ Google Colab の GPU で動かすことを想定しています。手元の PC �
 3. セル 1 で設定を入力し、セル 1 から 4 を順に実行します。
 4. セル 4 に表示された URL を開きます。
 
-セル 2 では Google ドライブへの接続を求められます。初回は llama.cpp のビルドに 10〜15 分かかります。セル 4 は実行したままにしてください。止めると画面が使えなくなります。
+セル 2 では Google ドライブへの接続を求められます。llama.cpp のビルドに 10〜15 分かかります。`SAVE_LLAMA_TO_DRIVE` をオンにすると、2 回目からはドライブに保存したものを使うのでビルドを省けます。セル 4 は実行したままにしてください。止めると画面が使えなくなります。
 
 ### セル 1 の設定
 
@@ -36,7 +36,8 @@ Google Colab の GPU で動かすことを想定しています。手元の PC �
 | `TUNNEL` | 画面への接続方法。下の表を参照 |
 | `DRIVE_DIR` | Google ドライブ上の保存先。既定は `MyDrive/mc-mod-translator` |
 | `AUTO_RESUME` | 中断した翻訳を起動時に再開する |
-| `CACHE_LLAMA_TO_DRIVE` | ビルドした llama.cpp をドライブに保存し、2 回目以降のセットアップを短くする |
+| `SAVE_LLAMA_TO_DRIVE` | llama.cpp (llama-server) をドライブに保存し、次回からそこから読み込む。既定はオフ (毎回ビルドする) |
+| `LLAMA_DRIVE_DIR` | llama-server の保存先・読み込み元。既定は `MyDrive/llama`。`SAVE_LLAMA_TO_DRIVE` がオンのときだけ使う |
 
 | 接続方法 | 必要なもの | 備考 |
 |---|---|---|
@@ -90,14 +91,21 @@ Patchouli のガイドブック、マニュアル、説明テキストなど、l
 
 ## モデル
 
-翻訳モデルと補助モデルを別々に選べます。
+翻訳には Index-Translate だけを使います。Index-Translate の公式の依頼形式 (instTrans) で翻訳を依頼します。
 
-| | 既定のモデル | 役割 |
+| 翻訳モデル | 大きさ (Q4_K_M) | 目安 |
 |---|---|---|
-| 翻訳モデル | IndexTeam/Index-Translate-35B-A3B-preview-GGUF | 翻訳 |
-| 補助モデル | Qwen/Qwen2.5-3B-Instruct-GGUF | 前提 Mod の照合、用語の抽出、追加リソースの判定 |
+| IndexTeam/Index-Translate-35B-A3B-preview-GGUF | 約 20GB | 既定。Colab の T4 では一部を CPU で処理する |
+| IndexTeam/Index-Translate-9B-GGUF | 約 5.4GB | GPU のメモリが 8GB 以上 |
+| IndexTeam/Index-Translate-2B-GGUF | 約 1.3GB | GPU のメモリが少ない場合 |
 
-量子化は GPU のメモリに合わせて自動で選びます。Hugging Face の GGUF ファイルの URL を「モデル」欄に入力すると、ダウンロードして候補に追加します。
+量子化は GPU のメモリに合わせて自動で選びます。Hugging Face の GGUF ファイルの URL を「モデル」欄に入力すると、ダウンロードして候補に追加します (翻訳モデルは Index-Translate のみ)。Q2_K などの小さい量子化は、訳の質が大きく下がります。
+
+補助モデルは既定では使いません。用語集の取り込みと追加リソースの判定はルールで行います。補助モデルを選ぶと、前提 Mod の照合、文中の用語の抽出、追加リソースの判定にも使います。
+
+### Windows で動かす場合
+
+llama.cpp の Windows 用 CUDA 版 (`llama-bXXXX-bin-win-cuda-12.4-x64.zip` と `cudart-llama-bin-win-cuda-12.4-x64.zip`) を https://github.com/ggml-org/llama.cpp/releases から同じフォルダに展開し、環境変数 `LLAMA_SERVER` に `llama-server.exe` のパスを指定してください。
 
 ## 用語集
 

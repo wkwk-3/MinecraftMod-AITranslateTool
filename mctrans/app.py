@@ -49,7 +49,7 @@ class State:
                         "helper": llm.LlamaServer("helper", 8082)}
         self.model_cfg = {
             "translator": {"repo": llm.DEFAULT_TRANSLATE_REPO, "file": "", "ctx": 16384, "n_cpu_moe": -1, "url": ""},
-            "helper": {"repo": llm.DEFAULT_HELPER_REPO, "file": "", "ctx": 8192, "n_cpu_moe": 0, "url": ""},
+            "helper": {"repo": "", "file": "", "ctx": 8192, "n_cpu_moe": 0, "url": ""},   # 既定は使わない
         }
         for cfg in self.model_cfg.values():
             cfg["path"] = ""          # URL から取得したモデルのローカルパス
@@ -209,6 +209,8 @@ def model_from_url(req: ModelUrlReq):
         info = llm.parse_model_url(req.url)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if req.role == "translator" and not tr.is_insttrans_model(info.get("repo", ""), info["file"]):
+        raise HTTPException(400, "翻訳モデルは Index-Translate だけを使えます")
     label = f"{info['file'].rsplit('/', 1)[-1]} (URL)"
     did = re.sub(r"\W", "_", info["file"])[-60:] + "_" + req.role
     if S.downloads.get(did, {}).get("status") == "downloading":
@@ -262,6 +264,7 @@ class ModelCfg(BaseModel):
     n_cpu_moe: int = -1    # -1 = VRAM に合わせて自動
     url: str = ""          # 既存の OpenAI 互換サーバー (ローカル実行時の Ollama/LM Studio 等)
     path: str = ""         # URL から取得したモデルのローカルパス
+    prompt_style: str = "insttrans"   # 翻訳の依頼形式。"generic" は自動テスト専用
     load_now: bool = False
 
 
@@ -269,6 +272,8 @@ class ModelCfg(BaseModel):
 def set_model(cfg: ModelCfg):
     if cfg.role not in S.model_cfg:
         raise HTTPException(400, "role")
+    if cfg.role == "translator" and not cfg.url and not tr.is_insttrans_model(cfg.repo, cfg.file, cfg.path):
+        raise HTTPException(400, "翻訳モデルは Index-Translate だけを使えます")
     S.model_cfg[cfg.role] = cfg.model_dump(exclude={"role", "load_now"})
     _save_settings()   # 再起動後も同じモデルで再開
     S.servers[cfg.role].stop()
@@ -798,7 +803,7 @@ def _ftbq_job(job: dict):
                     pending.append((k, v))
             prev = dict(list(out.items())[-8:])
             mod = pseudo(u["title"])
-            for chunk in tr.chunk_entries(pending, req.chunk_items, req.chunk_chars):
+            for chunk in tr.chunk_entries(pending, _chunk_items(req.chunk_items), req.chunk_chars):
                 _check_cancel()
                 got = _translate_chunk(srv, mod, chunk, prev, extra_terms=names, namespace="ftbquests")
                 out.update(got)
@@ -1184,7 +1189,7 @@ def _job(job: dict):
             src = _unit_source(u, langs)
             pending = [(k, v) for k, v in src.items() if k not in out]
             prev = dict(list(out.items())[-8:])          # 再開時も直前の訳を文脈に使う
-            for chunk in tr.chunk_entries(pending, req.chunk_items, req.chunk_chars):
+            for chunk in tr.chunk_entries(pending, _chunk_items(req.chunk_items), req.chunk_chars):
                 _check_cancel()
                 got = _translate_chunk(srv, mod, chunk, prev, namespace=u["ns"])
                 out.update(got)
@@ -1239,16 +1244,27 @@ def _translate_chunk(srv: llm.LlamaServer, mod: modscan.ModInfo, chunk: list[tup
     payload = {k: p[0] for k, p in protected.items()}
     srcs = [v for _, v in chunk]
     terms = mem.relevant_terms(srcs, extra=extra_terms)
-    examples = {s: mem.tm[s] for s in mem.tm if any(len(s) > 3 and s.lower() in v.lower() for v in srcs)}
-    prompt = tr.build_user_prompt(mod.name, mod.description, payload, terms, prev, dict(list(examples.items())[:40]),
-                                  namespace=namespace, notes=mem.notes())
-    system = tr.build_system_prompt(tr.detect_profiles(srcs, namespace), S.prompt_cfg["proper_nouns"],
-                                    S.prompt_cfg["custom"])
+    max_tokens = max(1024, sum(len(v) for v in srcs) * 3)
+    insttrans = _uses_insttrans()
+    if insttrans:
+        # Index-Translate: system を使わず、公式の instTrans 形式で 1 つの依頼文にする
+        system = ""
+        prompt = tr.build_insttrans_prompt(mod.name, payload, terms, prev, mem.notes(),
+                                           S.prompt_cfg["proper_nouns"], S.prompt_cfg["custom"])
+        extra = {"chat_template_kwargs": {"enable_thinking": False}}
+    else:
+        examples = {s: mem.tm[s] for s in mem.tm if any(len(s) > 3 and s.lower() in v.lower() for v in srcs)}
+        prompt = tr.build_user_prompt(mod.name, mod.description, payload, terms, prev,
+                                      dict(list(examples.items())[:40]), namespace=namespace, notes=mem.notes())
+        system = tr.build_system_prompt(tr.detect_profiles(srcs, namespace), S.prompt_cfg["proper_nouns"],
+                                        S.prompt_cfg["custom"])
+        extra = None
     data = None
     for attempt in range(2):
         try:
-            data = tr.parse_json_obj(srv.chat(system, prompt, temperature=0.2 + 0.1 * attempt,
-                                              max_tokens=max(1024, sum(len(v) for v in srcs) * 3), json_mode=True))
+            temp = (0.0 if insttrans else 0.2) + 0.1 * attempt
+            data = tr.parse_json_obj(srv.chat(system, prompt, temperature=temp, max_tokens=max_tokens,
+                                              json_mode=True, extra=extra))
         except Exception as e:
             S.log(f"[translator] 呼び出し失敗: {e}")
         if data:
@@ -1257,12 +1273,14 @@ def _translate_chunk(srv: llm.LlamaServer, mod: modscan.ModInfo, chunk: list[tup
     good, bad = {}, []
     for k, v in chunk:
         t = data.get(k)
+        if isinstance(t, str) and insttrans:
+            t = tr.from_v_markers(t)
         restored = tr.restore(t, protected[k][1]) if isinstance(t, str) else None
-        if restored is not None and restored.strip() and tr.structure_ok(v, restored):
+        if restored is not None and restored.strip() and tr.structure_ok(v, restored) \
+                and not tr.looks_untranslated(v, restored) \
+                and not (insttrans and tr.glossary_violations(v, restored, terms)):
+            _accept(k, v, restored, protected[k][1])
             good[k] = restored
-            mem.tm[v] = restored
-            if tr.NAME_KEY_RE.match(k) and len(v) < 40 and not protected[k][1] and v not in mem.user_glossary:
-                mem.glossary.setdefault(v, restored)   # 名前を用語集へ → 以降の説明文で統一
         else:
             bad.append((k, v))
     if bad:
@@ -1275,6 +1293,62 @@ def _translate_chunk(srv: llm.LlamaServer, mod: modscan.ModInfo, chunk: list[tup
                                                  extra_terms, namespace))
         else:
             for k, v in bad:
-                S.log(f"検証失敗のため原文を維持: {k}")
+                t = _translate_single_plain(srv, v, terms) if insttrans else None
+                if t is not None:
+                    missing = tr.glossary_violations(v, t, terms)
+                    if missing:
+                        S.log(f"用語集どおりに訳せませんでした: {k} ({', '.join(missing)})")
+                    _accept(k, v, t, tr.protect(v)[1])
+                    good[k] = t
+                    continue
+                S.log(f"翻訳できなかったため原文を維持: {k}")
                 good[k] = v
     return good
+
+
+def _uses_insttrans() -> bool:
+    """翻訳は Index-Translate だけを使うので、常に instTrans 形式で依頼する。
+    prompt_style="generic" は自動テスト用 (汎用の偽モデルで流れを確認するため)。"""
+    return S.model_cfg["translator"].get("prompt_style", "insttrans") != "generic"
+
+
+INSTTRANS_CHUNK_ITEMS = 8   # Index-Translate は 1 回の量が多いと名前と説明文が混ざりやすい
+
+
+def _chunk_items(requested: int) -> int:
+    return min(requested, INSTTRANS_CHUNK_ITEMS) if _uses_insttrans() else requested
+
+
+SHORT_NAME_RE = re.compile(r"[A-Za-z][A-Za-z'\- ]{0,28}[A-Za-z]")
+
+
+def _accept(key: str, src: str, ja: str, placeholders: list):
+    mem = S.memory
+    mem.tm[src] = ja
+    if placeholders or src in mem.user_glossary or len(src) >= 40:
+        return
+    # アイテム名などのキーに加え、2 語以内の短い名前 (例: "Pocket") も用語集へ → 以降の訳で表記を統一
+    short_name = SHORT_NAME_RE.fullmatch(src.strip()) and len(src.split()) <= 2
+    if tr.NAME_KEY_RE.match(key) or short_name:
+        mem.glossary.setdefault(src.strip(), ja.strip())
+
+
+def _translate_single_plain(srv: llm.LlamaServer, src: str, terms: dict[str, str]) -> str | None:
+    """1 項目だけを Index-Translate の基本形式 (JSON なし) で訳す。最後の手段。"""
+    text, found = tr.protect(src)
+    req = "请将以下文本翻译为日语，直接输出翻译结果，不要进行任何解释"
+    hints = [f"保留占位符 {', '.join(tr.to_v_markers(f'⟦{i}⟧') for i in range(len(found)))}"] if found else []
+    used = {k: v for k, v in terms.items() if k.lower() in src.lower()}
+    if used:
+        hints.append("术语映射：" + ", ".join(f"{k} -> {v}" for k, v in used.items()))
+    prompt = req + ("（" + "；".join(hints) + "）" if hints else "") + "：\n\n" + tr.to_v_markers(text)
+    try:
+        out = srv.chat("", prompt, temperature=0.0, max_tokens=max(256, len(src) * 3),
+                       extra={"chat_template_kwargs": {"enable_thinking": False}}).strip()
+    except Exception as e:
+        S.log(f"[translator] 呼び出し失敗: {e}")
+        return None
+    restored = tr.restore(tr.from_v_markers(out), found)
+    if restored and tr.structure_ok(src, restored) and not tr.looks_untranslated(src, restored):
+        return restored
+    return None

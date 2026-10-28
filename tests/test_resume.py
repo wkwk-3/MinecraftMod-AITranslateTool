@@ -179,9 +179,9 @@ def test_run_py_auto_resume(client, fake_llm, monkeypatch, capsys):
 
 
 def test_model_settings_persist(client):
-    client.post("/api/models/config", json={"role": "translator", "repo": "a/b", "file": "x.gguf", "n_cpu_moe": 3})
+    client.post("/api/models/config", json={"role": "translator", "repo": "IndexTeam/Index-Translate-9B-GGUF", "file": "x.gguf", "n_cpu_moe": 3})
     saved = json.loads((A.WORK / "settings.json").read_text("utf-8"))
-    assert saved["models"]["translator"]["repo"] == "a/b" and saved["models"]["translator"]["n_cpu_moe"] == 3
+    assert saved["models"]["translator"]["repo"] == "IndexTeam/Index-Translate-9B-GGUF" and saved["models"]["translator"]["n_cpu_moe"] == 3
     assert A.State().model_cfg["translator"]["file"] == "x.gguf"            # 再起動後も復元
 
 

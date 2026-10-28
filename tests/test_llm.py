@@ -86,4 +86,5 @@ def test_server_missing_binary(monkeypatch):
 
 def test_presets_default_first():
     assert llm.PRESETS["translator"][0]["repo"] == "IndexTeam/Index-Translate-35B-A3B-preview-GGUF"
-    assert llm.PRESETS["helper"][0]["repo"] == llm.DEFAULT_HELPER_REPO
+    assert llm.PRESETS["helper"][0]["repo"] == ""                                 # 補助モデルは既定で使わない
+    assert all("Index-Translate" in p["repo"] for p in llm.PRESETS["translator"])  # 翻訳は Index-Translate だけ

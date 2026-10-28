@@ -48,7 +48,7 @@ def test_kill_and_resume_real_process(tmp_path, fake_llm):
     make_jar((work / "mods").mkdir(parents=True) or work / "mods" / "big.jar",
              {"fabric.mod.json": {"id": "big", "name": "Big Mod"}, "assets/big/lang/en_us.json": entries})
     (work / "settings.json").write_text(json.dumps({"models": {
-        "translator": {"url": fake_llm.url}, "helper": {"repo": "", "url": ""}}}), "utf-8")
+        "translator": {"url": fake_llm.url, "prompt_style": "generic"}, "helper": {"repo": "", "url": ""}}}), "utf-8")
     fake_llm.delay = 0.3
     port = free_port()
     base, H = f"http://127.0.0.1:{port}", {"x-mct-token": "k"}
