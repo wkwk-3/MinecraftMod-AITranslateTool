@@ -62,6 +62,8 @@ class State:
         self.downloads: dict[str, dict] = {}
         # 翻訳プロンプトの設定: 固有名詞の方針・ユーザーの追加指示
         self.prompt_cfg = {"proper_nouns": "katakana", "custom": "", **(saved.get("prompt") or {})}
+        # 翻訳のまとめ方: per_mod = Mod (言語ファイル) ごと / mixed = Mod に関係なく lines 行ずつ
+        self.batch_cfg = {"mode": "per_mod", "lines": 40, **(saved.get("batch") or {})}
         self.memory = tr.Memory(WORK / "memory.json")
         self.logs: list[str] = []
         self.job = {"running": False, "kind": "", "phase": "待機中", "done": 0, "total": 0, "current": "",
@@ -192,7 +194,7 @@ def presets():
 
 def _save_settings():
     jobs.atomic_write_json(WORK / "settings.json", {"models": S.model_cfg, "custom_presets": S.custom_presets,
-                                                    "prompt": S.prompt_cfg})
+                                                    "prompt": S.prompt_cfg, "batch": S.batch_cfg})
 
 
 class ModelUrlReq(BaseModel):
@@ -361,6 +363,29 @@ def set_glossary(body: dict):
                           if k.strip() in S.memory.user_glossary and isinstance(m, dict) and (m.get("note") or m.get("case"))}
     S.memory.save()
     return {"ok": True}
+
+
+BATCH_MODES = ("per_mod", "mixed")
+BATCH_LINES_MAX = 1000
+
+
+@app.get("/api/batch")
+def get_batch():
+    return S.batch_cfg
+
+
+@app.post("/api/batch")
+def set_batch(body: dict):
+    """翻訳のまとめ方。実行中に変えた場合は、次に翻訳を始めたとき (再開を含む) から使う。"""
+    mode = body.get("mode", S.batch_cfg["mode"])
+    lines = body.get("lines", S.batch_cfg["lines"])
+    if mode not in BATCH_MODES:
+        raise HTTPException(400, "まとめ方は per_mod か mixed を指定してください")
+    if not isinstance(lines, int) or isinstance(lines, bool) or not 1 <= lines <= BATCH_LINES_MAX:
+        raise HTTPException(400, f"行数は 1〜{BATCH_LINES_MAX} の整数で指定してください")
+    S.batch_cfg.update(mode=mode, lines=lines)
+    _save_settings()
+    return S.batch_cfg
 
 
 @app.get("/api/prompt")
@@ -1181,6 +1206,13 @@ def _job(job: dict):
         if not _ensure_model("translator"):
             raise RuntimeError("翻訳モデルを起動できませんでした。ログを確認してください。")
         srv = S.servers["translator"]
+        # まとめ方は「今」の設定を使う (再開時もダッシュボードで選ばれている方で続ける)
+        mode, lines = S.batch_cfg["mode"], S.batch_cfg["lines"]
+        S.log("翻訳のまとめ方: " + ("Mod に関係なく " + str(lines) + " 行ずつ" if mode == "mixed" else "Mod ごと"))
+        JOBS.event(job, "batch_mode", mode=mode, lines=lines)
+        if mode == "mixed":
+            _translate_mixed(job, units, remaining, langs, srv, lines)
+            remaining = []
         for unit in remaining:
             u = units[unit]
             mod = S.mods[u["uid"]]
@@ -1304,6 +1336,71 @@ def _translate_chunk(srv: llm.LlamaServer, mod: modscan.ModInfo, chunk: list[tup
                 S.log(f"翻訳できなかったため原文を維持: {k}")
                 good[k] = v
     return good
+
+
+def _translate_mixed(job: dict, units: dict, remaining: list[str], langs: dict, srv: llm.LlamaServer,
+                     lines: int):
+    """Mod に関係なく、未訳の行を lines 行ずつまとめて訳す。
+    進み具合は Mod ごと翻訳と同じく言語ファイル (unit) ごとの parts に保存するので、
+    途中でまとめ方を切り替えて再開しても、訳し終えた行は二度と訳さない。"""
+    parts = {unit: JOBS.load_part(job, unit) for unit in remaining}
+    sources = {unit: _unit_source(units[unit], langs) for unit in remaining}
+    items = [(unit, k, v) for unit in remaining for k, v in sources[unit].items() if k not in parts[unit]]
+    # 行数が多いとモデルの文脈長を超えるので、文字数でも区切る (英語は 1 トークン ≒ 4 文字、出力の分も見込む)
+    max_chars = max(2000, int(S.model_cfg["translator"].get("ctx", 16384) * 1.2))
+    batches, cur, size = [], [], 0
+    for it in items:
+        if cur and (len(cur) >= lines or size + len(it[2]) > max_chars):
+            batches.append(cur)
+            cur, size = [], 0
+        cur.append(it)
+        size += len(it[1]) + len(it[2])
+    if cur:
+        batches.append(cur)
+    if any(len(b) < lines for b in batches[:-1]):
+        S.log(f"モデルの文脈長 ({S.model_cfg['translator'].get('ctx')}) に収まるよう、一部のまとまりを {lines} 行未満にしました")
+
+    prev: dict[str, str] = {}
+    for unit in remaining:                      # 再開時は、訳し終えた最後の数行を文脈に使う
+        prev.update(dict(list(parts[unit].items())[-8:]))
+    prev = dict(list(prev.items())[-8:])
+    for batch in batches:
+        _check_cancel()
+        # 別の Mod に同じキーがあっても区別できるよう、重複したキーには番号を付けて送る
+        chunk, mapping = [], {}
+        for unit, k, v in batch:
+            ck, n = k, 2
+            while ck in mapping:
+                ck, n = f"{k}#{n}", n + 1
+            mapping[ck] = (unit, k)
+            chunk.append((ck, v))
+        uids = list(dict.fromkeys(units[unit]["uid"] for unit, _, _ in batch))
+        if len(uids) == 1:
+            mod = S.mods[uids[0]]
+        else:
+            names = [S.mods[u].name for u in uids]
+            mod = modscan.ModInfo(uid="mixed", filename="",
+                                  name="複数の Mod (" + ", ".join(names[:5]) + (" ほか" if len(names) > 5 else "") + ")")
+        nss = {units[unit]["ns"] for unit, _, _ in batch}
+        S.job["phase"], S.job["current"] = "翻訳しています", f"{len(batch)} 行 ({mod.name})"
+        got = _translate_chunk(srv, mod, chunk, prev, namespace=nss.pop() if len(nss) == 1 else "")
+        touched = set()
+        for ck, t in got.items():
+            unit, k = mapping[ck]
+            parts[unit][k] = t
+            touched.add(unit)
+        for unit in touched:
+            JOBS.save_part(job, unit, parts[unit])   # ← ここで落ちても次回はこの続きから
+        for unit in {u for u, _, _ in batch}:
+            u = units[unit]
+            u["done"] = min(u["total"], u["done"] + sum(1 for x, _, _ in batch if x == unit))
+            if all(k in parts[unit] for k in sources[unit]):
+                u["status"], u["done"] = "done", u["total"]
+                JOBS.event(job, "unit_done", unit=unit)
+        S.job["done"] = sum(x["done"] for x in units.values())
+        prev = dict(list({ck: got[ck] for ck in got}.items())[-8:])
+        S.memory.save()
+        JOBS.save(job)
 
 
 def _uses_insttrans() -> bool:

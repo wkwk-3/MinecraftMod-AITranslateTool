@@ -218,6 +218,14 @@ textarea{resize:vertical;min-height:72px}
         <label class="chk"><input type="checkbox" id="optExisting" checked> Mod 同梱の日本語訳を使う</label>
         <label class="chk"><input type="checkbox" id="optSwap" checked> モデルを切り替えて VRAM を節約する</label>
         <label class="chk"><input type="checkbox" id="optRes" checked> 追加リソースも翻訳する (<span id="optResCount">0</span> ファイル)</label>
+        <div class="row">
+          <label class="grow">翻訳のまとめ方<select id="batchMode">
+            <option value="per_mod">Mod ごと</option>
+            <option value="mixed">Mod に関係なくまとめる</option>
+          </select></label>
+          <label id="batchLinesBox" style="width:130px">1 回の行数<input id="batchLines" type="number" min="1" max="1000" step="1" value="40"></label>
+        </div>
+        <div class="muted" id="batchHelp"></div>
         <div class="row"><label class="grow">パック名<input id="packName" type="text" value="MOD日本語化パック"></label>
           <label style="width:130px">パック形式<select id="packFmt">
             <option value="15">15 (1.20.1)</option><option value="18">18 (1.20.2)</option><option value="22">22 (1.20.3-4)</option>
@@ -612,6 +620,23 @@ $('#saveGloss').onclick=async()=>{const user={},meta={};
     const k=l.slice(0,i).trim(),[v,note='',flag='']=l.slice(i+1).split('|').map(s=>s.trim());if(!k||!v)return;
     user[k]=v;const cs=/^(区別|true|case)$/i.test(flag);if(note||cs)meta[k]={note,case:cs}});
   await post('/api/glossary',{user,meta});loadGloss()};
+// ---------- 翻訳のまとめ方 (再開時もここで選ばれている方で続ける)
+function renderBatch(){
+  const mixed=$('#batchMode').value==='mixed';
+  $('#batchLinesBox').hidden=!mixed;
+  $('#batchHelp').textContent=mixed
+    ?'選んだ Mod の未訳の行を、Mod の区切りに関係なく指定の行数ずつ訳します。行数が多いほど速くなりますが、小さいモデルでは訳がずれやすくなります。'
+    :'言語ファイルごとに、少しずつ順番に訳します。';
+}
+async function loadBatch(){const b=await api('/api/batch');$('#batchMode').value=b.mode;$('#batchLines').value=b.lines;renderBatch()}
+async function saveBatch(){
+  let n=Math.round(Number($('#batchLines').value));
+  if(!Number.isFinite(n)||n<1)n=1;if(n>1000)n=1000;$('#batchLines').value=n;
+  try{await post('/api/batch',{mode:$('#batchMode').value,lines:n})}catch(e){alert(e.message)}
+  renderBatch();
+}
+$('#batchMode').onchange=saveBatch;$('#batchLines').onchange=saveBatch;
+
 // ---------- 翻訳プロンプト設定
 async function loadPrompt(){const p=await api('/api/prompt');
   $('#pmProper').innerHTML=Object.entries(p.options.proper_nouns).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('');
@@ -623,7 +648,7 @@ $('#pmPreview').onclick=async()=>{const r=await api('/api/prompt/preview?profile
 $('#clearMem').onclick=async()=>{if(confirm('翻訳メモリを削除しますか？\n自動で登録した用語も削除されます。')){await post('/api/memory/clear');loadGloss()}};
 
 setInterval(()=>post('/api/heartbeat').catch(()=>{}),60000);
-loadMods();loadModels();loadGloss();loadPrompt();poll();loadRes();
+loadMods();loadModels();loadGloss();loadPrompt();loadBatch();poll();loadRes();
 try{if(localStorage.getItem('mct_tab')==='res')showTab('res')}catch(e){}
 </script>
 </body>
